@@ -120,7 +120,11 @@ void bootup_misc_mmio(void) {
     MAKE_MC_REG(0x230) = 0xFFFFFFFF;
     MAKE_MC_REG(0x234) = 0xFFFFFFFF;
     MAKE_MC_REG(0xB98) = 0xFFFFFFFF;
-    MAKE_MC_REG(0x038) = 0xE;
+    if (exosphere_get_target_firmware() >= EXOSPHERE_TARGET_FIRMWARE_400) {
+        MAKE_MC_REG(0x038) = 0xE;
+    } else {
+        MAKE_MC_REG(0x038) = 0x0;
+    }
     MAKE_MC_REG(0x03C) = 0;
     MAKE_MC_REG(0x9E0) = 0;
     MAKE_MC_REG(0x9E4) = 0;
@@ -128,7 +132,9 @@ void bootup_misc_mmio(void) {
     MAKE_MC_REG(0x9EC) = 0;
     MAKE_MC_REG(0x9F0) = 0;
     MAKE_MC_REG(0x9F4) = 0;
-    MAKE_MC_REG(0x01C) = 0;
+    if (exosphere_get_target_firmware() >= EXOSPHERE_TARGET_FIRMWARE_400) {
+        MAKE_MC_REG(0x01C) = 0;
+    }
     MAKE_MC_REG(0x020) = 0;
     MAKE_MC_REG(0x014) = 0x30000030;
     MAKE_MC_REG(0x018) = 0x2800003F;
@@ -225,11 +231,17 @@ void setup_4x_mmio(void) {
     AHB_ARBITRATION_DISABLE_0 |= 2;
     /* Set SMMU for BPMP/APB-DMA to point to TZRAM. */
     MC_SMMU_PTB_ASID_0 = 1;
+    (void)(MAKE_MC_REG(0x014));
     MC_SMMU_PTB_DATA_0 = 0x70012;
     MC_SMMU_AVPC_ASID_0 = 0x80000001;
     MC_SMMU_PPCS1_ASID_0 = 0x80000001;
+    (void)(MAKE_MC_REG(0x014));
+    MAKE_MC_REG(0x34) = 0;
+    (void)(MAKE_MC_REG(0x014));
+    MAKE_MC_REG(0x30) = 0;
+    (void)(MAKE_MC_REG(0x014));
     /* Wait for the BPMP to halt. */
-    while ((FLOW_CTLR_HALT_COP_EVENTS_0 >> 29) != 5) {
+    while ((FLOW_CTLR_HALT_COP_EVENTS_0 >> 29) != 2) {
         wait(1);
     }
     /* If not in a debugging context, setup the activity monitor. */

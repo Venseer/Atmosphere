@@ -15,6 +15,7 @@
 #include "randomcache.h"
 #include "timers.h"
 #include "bootconfig.h"
+#include "sysctr0.h"
 #include "exocfg.h"
 #include "smc_api.h"
 
@@ -406,6 +407,14 @@ void load_package2(coldboot_crt0_reloc_list_t *reloc_list) {
 
     /* Setup the Security Engine. */
     setup_se();
+    
+    /* Perform initial PMC register writes, if relevant. */
+    if (exosphere_get_target_firmware() >= EXOSPHERE_TARGET_FIRMWARE_400) {
+        MAKE_REG32(PMC_BASE + 0x0A0) &= 0xFFF3FFFF; 
+        MAKE_REG32(PMC_BASE + 0x818) &= 0xFFFFFFFE; 
+        MAKE_REG32(PMC_BASE + 0x334) |= 0x10; 
+        MAKE_REG32(PMC_BASE + 0x360) = 6; 
+    }
 
     wait(1000);
 
@@ -425,13 +434,21 @@ void load_package2(coldboot_crt0_reloc_list_t *reloc_list) {
     MAILBOX_NX_BOOTLOADER_IS_SECMON_AWAKE = 1;
 
     /* Wait for 1 second, to allow time for NX_BOOTLOADER to draw to the screen. This is useful for debugging. */
-    wait(1000000);
+    /* wait(1000000); */
 
     /* Synchronize with NX BOOTLOADER. */
     sync_with_nx_bootloader(NX_BOOTLOADER_STATE_MOVED_BOOTCONFIG);
 
     /* Load Boot Config into global. */
     setup_boot_config();
+    
+    /* Set sysctr0 registers based on bootconfig. */
+    if (exosphere_get_target_firmware() >= EXOSPHERE_TARGET_FIRMWARE_400) {
+        uint64_t sysctr0_val = bootconfig_get_value_for_sysctr0();
+        MAKE_SYSCTR0_REG(0x8) = (uint32_t)((sysctr0_val >> 0) & 0xFFFFFFFFULL);
+        MAKE_SYSCTR0_REG(0xC) = (uint32_t)((sysctr0_val >> 32) & 0xFFFFFFFFULL);
+        MAKE_SYSCTR0_REG(0x0) = 3;
+    }
 
     /* Synchronize with NX BOOTLOADER. */
     if (exosphere_get_target_firmware() >= EXOSPHERE_TARGET_FIRMWARE_400) {
