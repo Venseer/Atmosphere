@@ -23,14 +23,14 @@ static bool g_do_nxboot;
 
 static void setup_env(void) {
     /* Set the console up. */
-    if (console_init() == -1) {
+    if (console_init(g_stage2_args->display_initialized) == -1) {
         generic_panic();
     }
 
     /* Set up exception handlers. */
     setup_exception_handlers();
 
-    if(switchfs_mount_all() == -1) {
+    if(switchfs_import_mmc_structs(&g_stage2_args->sd_mmc, NULL) == -1 || switchfs_mount_all() == -1) {
         fatal_error("Failed to mount at least one parition: %s\n", strerror(errno));
     }
 
@@ -58,17 +58,17 @@ static void exit_callback(int rc) {
 int main(int argc, void **argv) {
     loader_ctx_t *loader_ctx = get_loader_ctx();
 
-    /* Initialize the display, console, FS, etc. */
-    setup_env();
-
     if (argc != STAGE2_ARGC) {
-        fatal_error("Invalid argc (expected %d, got %d)!\n", STAGE2_ARGC, argc);
+        generic_panic();
     }
     g_stage2_args = (stage2_args_t *)argv[STAGE2_ARGV_ARGUMENT_STRUCT];
 
     if(g_stage2_args->version != 0) {
-        fatal_error("Incorrect Stage2 args version (expected %lu, got %lu)!\n", 0ul, g_stage2_args->version);
+        generic_panic();
     }
+
+    /* Initialize the display, console, FS, etc. */
+    setup_env();
 
     printf(u8"Welcome to Atmosphère Fusée Stage 2!\n");
     printf("Stage 2 executing from: %s\n", (const char *)argv[STAGE2_ARGV_PROGRAM_PATH]);
