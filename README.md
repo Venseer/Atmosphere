@@ -6,6 +6,17 @@
 
 Atmosphère is a work-in-progress customized firmware for the Nintendo Switch.
 
+Components
+=====
+
+Atmosphère consists of multiple components, each of which replaces/modifies a different component of the system:
+
+* Fusée: First-stage Loader, responsible for loading and validating stage 2 (custom TrustZone) plus package2 (Kernel/FIRM sysmodules), and patching them as needed. This replaces all functionality normally in Package1loader/NX Bootloader.
+* Exosphère: Customized TrustZone, to run a customized Secure Monitor
+* Thermosphère: EL2 EmuNAND support, i.e. backing up and using virtualized/redirected NAND images
+* Stratosphère: Custom Sysmodule(s), both Rosalina style to extend the kernel/provide new features, and of the loader reimplementation style to hook important system actions
+* Troposphère: Application-level Horizon OS patches, used to implement desirable CFW features
+
 Credits
 =====
 
@@ -18,7 +29,6 @@ In no particular order, we credit the following for their invaluable contributio
 * __ChaN__ for the [FatFs](http://elm-chan.org/fsw/ff/00index_e.html) module.
 * __Riley__ for suggesting "Atmosphere" as a Horizon OS reimplementation+customization project name.
 * __naehrwert__ for the [hekate](https://github.com/nwert/hekate) project and its hwinit code base.
-* __ktemkin__ for the work on [Fusée Gelée](https://github.com/reswitched/fusee-launcher) and Atmosphère's SDMMC driver and hypervisor system.
 * __hedgeberg__ for research and hardware testing.
 * __lioncash__ for code cleanup and general improvements.
 * __jaames__ for designing and providing Atmosphère's graphical resources.
