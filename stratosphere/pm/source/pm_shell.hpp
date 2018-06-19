@@ -30,10 +30,15 @@ enum ShellCmd_5X {
     Shell_Cmd_5X_BoostSystemMemoryResourceLimit = 7
 };
 
-class ShellService final : IServiceObject {
+class ShellService final : public IServiceObject {
     public:
         Result dispatch(IpcParsedCommand &r, IpcCommand &out_c, u64 cmd_id, u8 *pointer_buffer, size_t pointer_buffer_size) override;
         Result handle_deferred() override;
+        
+        ShellService *clone() override {
+            return new ShellService(*this);
+        }
+        
         
     private:
         /* Actual commands. */

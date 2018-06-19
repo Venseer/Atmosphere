@@ -2,16 +2,24 @@
 #include <switch.h>
 #include <vector>
 
+#include "waitablemanagerbase.hpp"
 #include "iwaitable.hpp"
+#include "hossynch.hpp"
 
-class WaitableManager {
-    std::vector<IWaitable *> waitables;
-    u64 timeout;
+class IWaitable;
+
+class WaitableManager : public WaitableManagerBase {
+    protected:
+        std::vector<IWaitable *> to_add_waitables;
+        std::vector<IWaitable *> waitables;
+        u64 timeout;
+        HosMutex lock;
+        std::atomic_bool has_new_items;
     private:
         void process_internal(bool break_on_timeout);
     public:
-        WaitableManager(u64 t) : waitables(0), timeout(t) { }
-        ~WaitableManager() {
+        WaitableManager(u64 t) : waitables(0), timeout(t), has_new_items(false) { }
+        ~WaitableManager() override {
             /* This should call the destructor for every waitable. */
             for (auto & waitable : waitables) {
                 delete waitable;
@@ -19,8 +27,7 @@ class WaitableManager {
             waitables.clear();
         }
         
-        unsigned int get_num_signalable();       
-        void add_waitable(IWaitable *waitable);
-        void process();
-        void process_until_timeout();
+        virtual void add_waitable(IWaitable *waitable);
+        virtual void process();
+        virtual void process_until_timeout();
 };

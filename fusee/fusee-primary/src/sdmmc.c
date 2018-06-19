@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <inttypes.h>
 
 #include "lib/driver_utils.h"
 #include "sdmmc.h"
@@ -141,34 +142,52 @@ enum sdmmc_clock_dividers {
     MMC_CLOCK_DIVIDER_SDR12  = 31, // 16.5, from the TRM table
     MMC_CLOCK_DIVIDER_SDR25  = 15, // 8.5, from the table
     MMC_CLOCK_DIVIDER_SDR50  = 7,  // 4.5, from the table
-    MMC_CLOCK_DIVIDER_SDR104 = 4,  // 2, from the datasheet
+    MMC_CLOCK_DIVIDER_SDR104 = 2,  // 2, from the table
 
     /* Clock dividers: MMC */
     MMC_CLOCK_DIVIDER_HS26   = 30, // 16, from the TRM table
     MMC_CLOCK_DIVIDER_HS52   = 14, // 8, from the table
 
-    MMC_CLOCK_DIVIDER_HS200  = 2,  // 1 -- NOTE THIS IS WITH RESPECT TO PLLC4_OUT2_LJ
-    MMC_CLOCK_DIVIDER_HS400  = 2,  // 1 -- NOTE THIS IS WITH RESPECT TO PLLC4_OUT2_LJ
-};
+#if 0
+    // TODO: Figure out why PLLC4_OUT2_LJ doesn't work, most likely need to be enabled in hwinit
+    MMC_CLOCK_DIVIDER_HS200  = 0,  // 1 -- NOTE THIS IS WITH RESPECT TO PLLC4_OUT2_LJ
+    MMC_CLOCK_DIVIDER_HS400  = 0,  // 1 -- NOTE THIS IS WITH RESPECT TO PLLC4_OUT2_LJ
+#else
+    MMC_CLOCK_DIVIDER_HS200 = 3,
+    MMC_CLOCK_DIVIDER_HS400 = 3,
+#endif
 
+    /* Clock dividers: Legacy 12 MHz timer */
+    MMC_CLOCK_DIVIDER_LEGACY = 66, // 34 - to get 12 MHz out of 408 MHz
+};
 
 /**
  * SDMMC clock divider constants
  */
 enum sdmmc_clock_sources {
 
-    /* Clock dividers: SD */
-    MMC_CLOCK_SOURCE_SDR12  = 0, // PLLP
-    MMC_CLOCK_SOURCE_SDR25  = 0,
-    MMC_CLOCK_SOURCE_SDR50  = 0,
-    MMC_CLOCK_SOURCE_SDR104 = 0,
+    /* Clock sources: SD */
+    MMC_CLOCK_SOURCE_SDR12  = CLK_SOURCE_SDMMC1_PLLP_OUT0, // PLLP
+    MMC_CLOCK_SOURCE_SDR25  = CLK_SOURCE_SDMMC1_PLLP_OUT0,
+    MMC_CLOCK_SOURCE_SDR50  = CLK_SOURCE_SDMMC1_PLLP_OUT0,
+    MMC_CLOCK_SOURCE_SDR104 = CLK_SOURCE_SDMMC1_PLLP_OUT0,
 
-    /* Clock dividers: MMC */
-    MMC_CLOCK_SOURCE_HS26   = 0, // PLLP
-    MMC_CLOCK_SOURCE_HS52   = 0,
-    MMC_CLOCK_SOURCE_HS200  = 1, // PLLC4_OUT2_LJ
-    MMC_CLOCK_SOURCE_HS400  = 1,
+    /* Clock sources: MMC */
+    MMC_CLOCK_SOURCE_HS26   = CLK_SOURCE_SDMMC4_PLLP_OUT0, // PLLP
+    MMC_CLOCK_SOURCE_HS52   = CLK_SOURCE_SDMMC4_PLLP_OUT0,
 
+#if 0
+    // TODO: Figure out why PLLC4_OUT2_LJ doesn't work, most likely need to be enabled in hwinit
+    MMC_CLOCK_SOURCE_HS200  = CLK_SOURCE_SDMMC4_PLLC4_OUT2_LJ, // PLLC4_OUT2_LJ
+    MMC_CLOCK_SOURCE_HS400  = CLK_SOURCE_SDMMC4_PLLC4_OUT2_LJ,
+#else
+    // For the time being, use PLLP_OUT0
+    MMC_CLOCK_SOURCE_HS200 = CLK_SOURCE_SDMMC4_PLLP_OUT0,
+    MMC_CLOCK_SOURCE_HS400 = CLK_SOURCE_SDMMC4_PLLP_OUT0,
+#endif
+
+    /* Clock sources: Legacy 12 MHz timer */
+    MMC_CLOCK_SOURCE_LEGACY = CLK_SOURCE_SDMMC_LEGACY_PLLP_OUT0,
 };
 
 /**
@@ -239,7 +258,7 @@ enum sdmmc_register_bits {
     MMC_CLOCK_CONTROL_CARD_CLOCK_ENABLE      = (1 << 2),
     MMC_CLOCK_CONTROL_FREQUENCY_MASK         = (0x3FF << 6),
     MMC_CLOCK_CONTROL_FREQUENCY_SHIFT        = 8,
-    MMC_CLOCK_CONTROL_FREQUENCY_INIT         = 0x18, // generates 400kHz from the TRM dividers
+    MMC_CLOCK_CONTROL_FREQUENCY_INIT         = 0x1F, // generates 400kHz from the TRM dividers
     MMC_CLOCK_CONTROL_FREQUENCY_PASSTHROUGH  = 0x00, // passes through the CAR clock unmodified
 
     /* Host control */
@@ -796,29 +815,42 @@ static int sdmmc_hardware_reset(struct mmc *mmc, uint32_t reset_flags)
 }
 
 /**
+ * Delays for a given amount of host clock cycles.
+ *
+ * @param mmc The MMC controller whose clock cycles should be waited upon.
+ * @param clocks The number of clock cycles to wait.
+ */
+static void sdmmc_host_clock_delay(struct mmc *mmc, unsigned int clocks)
+{
+    // For the time being simply wait for clocks * 50 us
+    // This covers clocks as slow as 20 kHz and hence should always be safe
+    // TODO: determine the actual wait time based on clock source and divider
+    udelay(50 * clocks);
+}
+
+/**
  * Performs low-level initialization for SDMMC4, used for the eMMC.
  */
 static int sdmmc4_set_up_clock_and_io(struct mmc *mmc)
 {
     volatile struct tegra_car *car = car_get_regs();
     volatile struct tegra_padctl *padctl = padctl_get_regs();
-    (void)mmc;
 
     // Put SDMMC4 in reset
     car->rst_dev_l_set |= 0x8000;
 
     // Configure the clock to place the device into the initial mode.
-    car->clk_src[CLK_SOURCE_SDMMC4] = CLK_SOURCE_FIRST | MMC_CLOCK_DIVIDER_SDR12;
+    car->clk_src[CLK_SOURCE_SDMMC4] = MMC_CLOCK_SOURCE_SDR12 | MMC_CLOCK_DIVIDER_SDR12;
 
     // Set the legacy divier used for detecting timeouts.
-    car->clk_src_y[CLK_SOURCE_SDMMC_LEGACY] = CLK_SOURCE_FIRST | MMC_CLOCK_DIVIDER_SDR12;
+    car->clk_src_y[CLK_SOURCE_SDMMC_LEGACY] = MMC_CLOCK_SOURCE_LEGACY | MMC_CLOCK_DIVIDER_LEGACY;
 
     // Set SDMMC4 clock enable
     car->clk_enb_l_set |= 0x8000;
     car->clk_enb_y_set |= CAR_CONTROL_SDMMC_LEGACY;
 
-    // host_clk_delay(0x64, clk_freq) -> Delay 100 host clock cycles
-    udelay(5000);
+    // Delay 100 host clock cycles
+    sdmmc_host_clock_delay(mmc, 100);
 
     // Take SDMMC4 out of reset
     car->rst_dev_l_clr |= 0x8000;
@@ -910,32 +942,38 @@ static int sdmmc_set_up_clocking_parameters(struct mmc *mmc, enum sdmmc_bus_volt
 {
     // Clear the I/O conditioning constants.
     mmc->regs->vendor_clock_cntrl &= ~(MMC_CLOCK_TRIM_MASK | MMC_CLOCK_TAP_MASK);
-    mmc->regs->auto_cal_config &= ~MMC_AUTOCAL_PDPU_CONFIG_MASK;
 
     // Per the TRM, set the PADPIPE clock enable.
     mmc->regs->vendor_clock_cntrl |= MMC_CLOCK_PADPIPE_CLKEN_OVERRIDE;
-
-    switch (operating_voltage) {
-        case MMC_VOLTAGE_1V8:
-            mmc->regs->auto_cal_config |= MMC_AUTOCAL_PDPU_SDMMC4_1V8;
-            break;
-        case MMC_VOLTAGE_3V3:
-            mmc->regs->auto_cal_config |= MMC_AUTOCAL_PDPU_SDMMC1_3V3;
-            break;
-        default:
-            printk("ERROR: currently no controllers support voltage %d", mmc->operating_voltage);
-            return EINVAL;
-
-    }
 
     // Set up the I/O conditioning constants used to ensure we have a reliable clock.
     // Constants above and procedure below from the TRM.
     switch (mmc->controller) {
         case SWITCH_EMMC:
+            if (operating_voltage != MMC_VOLTAGE_1V8) {
+                mmc_print(mmc, "ERROR: eMMC can only run at 1V8, but mmc struct claims voltage %d", operating_voltage);
+                return EINVAL;
+            }
+
+            mmc->regs->auto_cal_config &= ~MMC_AUTOCAL_PDPU_CONFIG_MASK;
+            mmc->regs->auto_cal_config |= MMC_AUTOCAL_PDPU_SDMMC4_1V8;
             mmc->regs->vendor_clock_cntrl |= (MMC_CLOCK_TRIM_SDMMC4 | MMC_CLOCK_TAP_SDMMC4);
             break;
 
         case SWITCH_MICROSD:
+            switch (operating_voltage) {
+                case MMC_VOLTAGE_1V8:
+                    mmc->regs->auto_cal_config &= ~MMC_AUTOCAL_PDPU_CONFIG_MASK;
+                    mmc->regs->auto_cal_config |= MMC_AUTOCAL_PDPU_SDMMC1_1V8;
+                    break;
+                case MMC_VOLTAGE_3V3:
+                    mmc->regs->auto_cal_config &= ~MMC_AUTOCAL_PDPU_CONFIG_MASK;
+                    mmc->regs->auto_cal_config |= MMC_AUTOCAL_PDPU_SDMMC1_3V3;
+                    break;
+                default:
+                    mmc_print(mmc, "ERROR: microsd does not support voltage %d", operating_voltage);
+                    return EINVAL;
+            }
             mmc->regs->vendor_clock_cntrl |= (MMC_CLOCK_TRIM_SDMMC1 | MMC_CLOCK_TAP_SDMMC1);
             break;
 
@@ -1095,11 +1133,11 @@ static int sdmmc_always_fail(struct mmc *mmc)
  *      a divider of N results in a clock that's (N/2) + 1 slower.
  * @param sdmmc_divisor An additional divisor applied in the SDMMC controller.
  */
-static void sdmmc4_configure_clock(struct mmc *mmc, int source, int car_divisor, int sdmmc_divisor)
+static void sdmmc4_configure_clock(struct mmc *mmc, uint32_t source, int car_divisor, int sdmmc_divisor)
 {
     volatile struct tegra_car *car = car_get_regs();
 
-    // Set up the CAR aspect of the clock, and wait 2uS per change per the TRM.
+    // Set up the CAR aspect of the clock, and wait 2us per change per the TRM.
     car->clk_enb_l_clr = CAR_CONTROL_SDMMC4;
     car->clk_src[CLK_SOURCE_SDMMC4] = source | car_divisor;
     udelay(2);
@@ -1121,11 +1159,11 @@ static void sdmmc4_configure_clock(struct mmc *mmc, int source, int car_divisor,
  *      a divider of N results in a clock that's (N/2) + 1 slower.
  * @param sdmmc_divisor An additional divisor applied in the SDMMC controller.
  */
-static void sdmmc1_configure_clock(struct mmc *mmc, int source, int car_divisor, int sdmmc_divisor)
+static void sdmmc1_configure_clock(struct mmc *mmc, uint32_t source, int car_divisor, int sdmmc_divisor)
 {
     volatile struct tegra_car *car = car_get_regs();
 
-    // Set up the CAR aspect of the clock, and wait 2uS per change per the TRM.
+    // Set up the CAR aspect of the clock, and wait 2us per change per the TRM.
     car->clk_enb_l_clr = CAR_CONTROL_SDMMC1;
     car->clk_src[CLK_SOURCE_SDMMC1] = source | car_divisor;
     udelay(2);
@@ -1462,7 +1500,6 @@ static int sdmmc1_set_up_clock_and_io(struct mmc *mmc)
     volatile struct tegra_car *car = car_get_regs();
     volatile struct tegra_pinmux *pinmux = pinmux_get_regs();
     volatile struct tegra_padctl *padctl = padctl_get_regs();
-    (void)mmc;
 
     // Set up each of the relevant pins to be connected to output drivers,
     // and selected for SDMMC use.
@@ -1486,19 +1523,19 @@ static int sdmmc1_set_up_clock_and_io(struct mmc *mmc)
     car->rst_dev_l_set = CAR_CONTROL_SDMMC1;
 
     // Configure the clock to place the device into the initial mode.
-    car->clk_src[CLK_SOURCE_SDMMC1] = CLK_SOURCE_FIRST | MMC_CLOCK_DIVIDER_SDR12;
+    car->clk_src[CLK_SOURCE_SDMMC1] = MMC_CLOCK_SOURCE_SDR12 | MMC_CLOCK_DIVIDER_SDR12;
 
     // Set the legacy divier used for detecting timeouts.
-    car->clk_src_y[CLK_SOURCE_SDMMC_LEGACY] = CLK_SOURCE_FIRST | MMC_CLOCK_DIVIDER_SDR12;
+    car->clk_src_y[CLK_SOURCE_SDMMC_LEGACY] = MMC_CLOCK_SOURCE_LEGACY | MMC_CLOCK_DIVIDER_LEGACY;
 
     // Set SDMMC1 clock enable
     car->clk_enb_l_set = CAR_CONTROL_SDMMC1;
     car->clk_enb_y_set = CAR_CONTROL_SDMMC_LEGACY;
 
-    // host_clk_delay(0x64, clk_freq) -> Delay 100 host clock cycles
-    udelay(5000);
+    // Delay 100 host clock cycles
+    sdmmc_host_clock_delay(mmc, 100);
 
-    // Take SDMMC4 out of reset
+    // Take SDMMC1 out of reset
     car->rst_dev_l_clr |= CAR_CONTROL_SDMMC1;
 
     // Enable clock loopback.
@@ -1756,6 +1793,7 @@ static int sdmmc_wait_for_event(struct mmc *mmc,
         uint32_t fault_conditions, fault_handler_t fault_handler)
 {
     uint32_t timebase = get_time();
+    uint32_t intstatus;
     int rc;
 
     // Wait until we either wind up ready, or until we've timed out.
@@ -1763,7 +1801,13 @@ static int sdmmc_wait_for_event(struct mmc *mmc,
         if (get_time_since(timebase) > mmc->timeout)
             return ETIMEDOUT;
 
-        if (mmc->regs->int_status & fault_conditions) {
+        // Read intstatus into temporary variable to make sure that the
+        // priorities are: fault conditions, target irq, errors
+        // This makes sure that if fault conditions and target irq
+        // comes nearly at the same time that the fault handler will
+        // always be called
+        intstatus = mmc->regs->int_status;
+        if (intstatus & fault_conditions) {
 
             // If we don't have a handler, fault.
             if (!fault_handler) {
@@ -1779,22 +1823,23 @@ static int sdmmc_wait_for_event(struct mmc *mmc,
             }
 
             // Finally, EOI the relevant interrupt.
-            mmc->regs->int_status |= fault_conditions;
+            mmc->regs->int_status = fault_conditions;
+            intstatus &= ~(fault_conditions);
 
             // Reset the timebase, so it applies to the next
             // DMA interval.
             timebase = get_time();
         }
 
-        if (mmc->regs->int_status & target_irq)
+        if (intstatus & target_irq)
             return 0;
 
         if (state_conditions && !(mmc->regs->present_state & state_conditions))
             return 0;
 
         // If an error occurs, return it.
-        if (mmc->regs->int_status & MMC_STATUS_ERROR_MASK)
-            return (mmc->regs->int_status & MMC_STATUS_ERROR_MASK);
+        if (intstatus & MMC_STATUS_ERROR_MASK)
+            return (intstatus & MMC_STATUS_ERROR_MASK);
     }
 }
 
@@ -2042,7 +2087,7 @@ static void sdmmc_enable_interrupts(struct mmc *mmc, bool enabled)
         MMC_STATUS_DMA_INTERRUPT | MMC_STATUS_ERROR_MASK;
 
     // Clear any pending interrupts.
-    mmc->regs->int_status |= all_interrupts;
+    mmc->regs->int_status = all_interrupts;
 
     // And enable or disable the pseudo-interrupts.
     if (enabled) {
@@ -2160,6 +2205,11 @@ static int sdmmc_send_command(struct mmc *mmc, enum sdmmc_command command,
         }
     }
 
+    // Periodically recalibrate the SD controller
+    if (mmc->controller == SWITCH_MICROSD) {
+        sdmmc_run_autocal(mmc, true);
+    }
+
     // If we have data to send, prepare it.
     sdmmc_prepare_command_data(mmc, blocks_to_transfer, is_write, auto_terminate, mmc->use_dma, argument);
 
@@ -2168,11 +2218,11 @@ static int sdmmc_send_command(struct mmc *mmc, enum sdmmc_command command,
     if (blocks_to_transfer && is_write && mmc->use_dma && data_buffer)
         memcpy(sdmmc_bounce_buffer, (void *)mmc->active_data_buffer, total_data_to_xfer);
 
-    // Configure the controller to send the command.
-    sdmmc_prepare_command_registers(mmc, blocks_to_transfer, command, response_type, checks);
-
     // Ensure we get the status response we want.
     sdmmc_enable_interrupts(mmc, true);
+
+    // Configure the controller to send the command.
+    sdmmc_prepare_command_registers(mmc, blocks_to_transfer, command, response_type, checks);
 
     // Wait for the command to be completed.
     rc = sdmmc_wait_for_command_completion(mmc);
@@ -3423,7 +3473,7 @@ int sdmmc_init(struct mmc *mmc, enum sdmmc_controller controller, bool allow_vol
         return rc;
     }
 
-    // Default to a timeout of 1S.
+    // Default to a timeout of 1s.
     mmc->timeout = 1000000;
     mmc->partition_switch_time = 1000;
 
@@ -3614,4 +3664,85 @@ int sdmmc_write(struct mmc *mmc, const void *buffer, uint32_t block, unsigned in
 bool sdmmc_card_present(struct mmc *mmc)
 {
     return mmc->card_present(mmc);
+}
+
+/**
+ * Prints out all of the tegra_mmc struct fields
+ *
+ * @mmc mmc The controller with which to dump registers.
+ */
+void sdmmc_dump_regs(struct mmc *mmc) {
+    mmc_debug(mmc, "dma_address: 0x%08" PRIX32 "\n",mmc->regs->dma_address);
+    mmc_debug(mmc, "block_size: 0x%04" PRIX16 "\n",mmc->regs->block_size);
+    mmc_debug(mmc, "block_count: 0x%04" PRIX16 "\n",mmc->regs->block_count);
+    mmc_debug(mmc, "argument: 0x%08" PRIX32 "\n",mmc->regs->argument);
+    mmc_debug(mmc, "transfer_mode: 0x%04" PRIX16 "\n",mmc->regs->transfer_mode);
+    mmc_debug(mmc, "command: 0x%04" PRIX16 "\n",mmc->regs->command);
+    mmc_debug(mmc, "response[0]: 0x%08" PRIX32 "\n",mmc->regs->response[0]);
+    mmc_debug(mmc, "response[1]: 0x%08" PRIX32 "\n",mmc->regs->response[1]);
+    mmc_debug(mmc, "response[2]: 0x%08" PRIX32 "\n",mmc->regs->response[2]);
+    mmc_debug(mmc, "response[3]: 0x%08" PRIX32 "\n",mmc->regs->response[3]);
+    mmc_debug(mmc, "buffer: 0x%08" PRIX32 "\n",mmc->regs->buffer);
+    mmc_debug(mmc, "present_state: 0x%08" PRIX32 "\n",mmc->regs->present_state);
+    mmc_debug(mmc, "host_control: 0x%02" PRIX8 "\n",mmc->regs->host_control);
+    mmc_debug(mmc, "power_control: 0x%02" PRIX8 "\n",mmc->regs->power_control);
+    mmc_debug(mmc, "block_gap_control: 0x%02" PRIX8 "\n",mmc->regs->block_gap_control);
+    mmc_debug(mmc, "wake_up_control: 0x%02" PRIX8 "\n",mmc->regs->wake_up_control);
+    mmc_debug(mmc, "clock_control: 0x%04" PRIX16 "\n",mmc->regs->clock_control);
+    mmc_debug(mmc, "timeout_control: 0x%02" PRIX8 "\n",mmc->regs->timeout_control);
+    mmc_debug(mmc, "software_reset: 0x%02" PRIX8 "\n",mmc->regs->software_reset);
+    mmc_debug(mmc, "int_status: 0x%08" PRIX32 "\n",mmc->regs->int_status);
+    mmc_debug(mmc, "int_enable: 0x%08" PRIX32 "\n",mmc->regs->int_enable);
+    mmc_debug(mmc, "signal_enable: 0x%08" PRIX32 "\n",mmc->regs->signal_enable);
+    mmc_debug(mmc, "acmd12_err: 0x%04" PRIX16 "\n",mmc->regs->acmd12_err);
+    mmc_debug(mmc, "host_control2: 0x%04" PRIX16 "\n",mmc->regs->host_control2);
+    mmc_debug(mmc, "capabilities: 0x%08" PRIX32 "\n",mmc->regs->capabilities);
+    mmc_debug(mmc, "capabilities_1: 0x%08" PRIX32 "\n",mmc->regs->capabilities_1);
+    mmc_debug(mmc, "max_current: 0x%08" PRIX32 "\n",mmc->regs->max_current);
+    mmc_debug(mmc, "set_acmd12_error: 0x%04" PRIX16 "\n",mmc->regs->set_acmd12_error);
+    mmc_debug(mmc, "set_int_error: 0x%04" PRIX16 "\n",mmc->regs->set_int_error);
+    mmc_debug(mmc, "adma_error: 0x%04" PRIX16 "\n",mmc->regs->adma_error);
+    mmc_debug(mmc, "adma_address: 0x%08" PRIX32 "\n",mmc->regs->adma_address);
+    mmc_debug(mmc, "upper_adma_address: 0x%08" PRIX32 "\n",mmc->regs->upper_adma_address);
+    mmc_debug(mmc, "preset_for_init: 0x%04" PRIX16 "\n",mmc->regs->preset_for_init);
+    mmc_debug(mmc, "preset_for_default: 0x%04" PRIX16 "\n",mmc->regs->preset_for_default);
+    mmc_debug(mmc, "preset_for_high: 0x%04" PRIX16 "\n",mmc->regs->preset_for_high);
+    mmc_debug(mmc, "preset_for_sdr12: 0x%04" PRIX16 "\n",mmc->regs->preset_for_sdr12);
+    mmc_debug(mmc, "preset_for_sdr25: 0x%04" PRIX16 "\n",mmc->regs->preset_for_sdr25);
+    mmc_debug(mmc, "preset_for_sdr50: 0x%04" PRIX16 "\n",mmc->regs->preset_for_sdr50);
+    mmc_debug(mmc, "preset_for_sdr104: 0x%04" PRIX16 "\n",mmc->regs->preset_for_sdr104);
+    mmc_debug(mmc, "preset_for_ddr50: 0x%04" PRIX16 "\n",mmc->regs->preset_for_ddr50);
+    mmc_debug(mmc, "slot_int_status: 0x%04" PRIX16 "\n",mmc->regs->slot_int_status);
+    mmc_debug(mmc, "host_version: 0x%04" PRIX16 "\n",mmc->regs->host_version);
+    mmc_debug(mmc, "vendor_clock_cntrl: 0x%08" PRIX32 "\n",mmc->regs->vendor_clock_cntrl);
+    mmc_debug(mmc, "vendor_sys_sw_cntrl: 0x%08" PRIX32 "\n",mmc->regs->vendor_sys_sw_cntrl);
+    mmc_debug(mmc, "vendor_err_intr_status: 0x%08" PRIX32 "\n",mmc->regs->vendor_err_intr_status);
+    mmc_debug(mmc, "vendor_cap_overrides: 0x%08" PRIX32 "\n",mmc->regs->vendor_cap_overrides);
+    mmc_debug(mmc, "vendor_boot_cntrl: 0x%08" PRIX32 "\n",mmc->regs->vendor_boot_cntrl);
+    mmc_debug(mmc, "vendor_boot_ack_timeout: 0x%08" PRIX32 "\n",mmc->regs->vendor_boot_ack_timeout);
+    mmc_debug(mmc, "vendor_boot_dat_timeout: 0x%08" PRIX32 "\n",mmc->regs->vendor_boot_dat_timeout);
+    mmc_debug(mmc, "vendor_debounce_count: 0x%08" PRIX32 "\n",mmc->regs->vendor_debounce_count);
+    mmc_debug(mmc, "vendor_misc_cntrl: 0x%08" PRIX32 "\n",mmc->regs->vendor_misc_cntrl);
+    mmc_debug(mmc, "max_current_override: 0x%08" PRIX32 "\n",mmc->regs->max_current_override);
+    mmc_debug(mmc, "max_current_override_hi: 0x%08" PRIX32 "\n",mmc->regs->max_current_override_hi);
+    mmc_debug(mmc, "vendor_io_trim_cntrl: 0x%08" PRIX32 "\n",mmc->regs->vendor_io_trim_cntrl);
+    mmc_debug(mmc, "vendor_dllcal_cfg: 0x%08" PRIX32 "\n",mmc->regs->vendor_dllcal_cfg);
+    mmc_debug(mmc, "vendor_dll_ctrl0: 0x%08" PRIX32 "\n",mmc->regs->vendor_dll_ctrl0);
+    mmc_debug(mmc, "vendor_dll_ctrl1: 0x%08" PRIX32 "\n",mmc->regs->vendor_dll_ctrl1);
+    mmc_debug(mmc, "vendor_dllcal_cfg_sta: 0x%08" PRIX32 "\n",mmc->regs->vendor_dllcal_cfg_sta);
+    mmc_debug(mmc, "vendor_tuning_cntrl0: 0x%08" PRIX32 "\n",mmc->regs->vendor_tuning_cntrl0);
+    mmc_debug(mmc, "vendor_tuning_cntrl1: 0x%08" PRIX32 "\n",mmc->regs->vendor_tuning_cntrl1);
+    mmc_debug(mmc, "vendor_tuning_status0: 0x%08" PRIX32 "\n",mmc->regs->vendor_tuning_status0);
+    mmc_debug(mmc, "vendor_tuning_status1: 0x%08" PRIX32 "\n",mmc->regs->vendor_tuning_status1);
+    mmc_debug(mmc, "vendor_clk_gate_hysteresis_count: 0x%08" PRIX32 "\n",mmc->regs->vendor_clk_gate_hysteresis_count);
+    mmc_debug(mmc, "vendor_preset_val0: 0x%08" PRIX32 "\n",mmc->regs->vendor_preset_val0);
+    mmc_debug(mmc, "vendor_preset_val1: 0x%08" PRIX32 "\n",mmc->regs->vendor_preset_val1);
+    mmc_debug(mmc, "vendor_preset_val2: 0x%08" PRIX32 "\n",mmc->regs->vendor_preset_val2);
+    mmc_debug(mmc, "sdmemcomppadctrl: 0x%08" PRIX32 "\n",mmc->regs->sdmemcomppadctrl);
+    mmc_debug(mmc, "auto_cal_config: 0x%08" PRIX32 "\n",mmc->regs->auto_cal_config);
+    mmc_debug(mmc, "auto_cal_interval: 0x%08" PRIX32 "\n",mmc->regs->auto_cal_interval);
+    mmc_debug(mmc, "auto_cal_status: 0x%08" PRIX32 "\n",mmc->regs->auto_cal_status);
+    mmc_debug(mmc, "io_spare: 0x%08" PRIX32 "\n",mmc->regs->io_spare);
+    mmc_debug(mmc, "sdmmca_mccif_fifoctrl: 0x%08" PRIX32 "\n",mmc->regs->sdmmca_mccif_fifoctrl);
+    mmc_debug(mmc, "timeout_wcoal_sdmmca: 0x%08" PRIX32 "\n",mmc->regs->timeout_wcoal_sdmmca);
 }

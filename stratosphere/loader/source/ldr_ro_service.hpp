@@ -12,7 +12,7 @@ enum RoServiceCmd {
     Ro_Cmd_Initialize = 4,
 };
 
-class RelocatableObjectsService final : IServiceObject {
+class RelocatableObjectsService final : public IServiceObject {
     Handle process_handle;
     u64 process_id;
     bool has_initialized;
@@ -28,6 +28,10 @@ class RelocatableObjectsService final : IServiceObject {
         Result handle_deferred() override {
             /* This service will never defer. */
             return 0;
+        }
+        
+        RelocatableObjectsService *clone() override {
+            return new RelocatableObjectsService(*this);
         }
         
     private:

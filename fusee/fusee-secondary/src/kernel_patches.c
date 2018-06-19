@@ -5,8 +5,8 @@
 
 #define MAKE_BRANCH(a, o) 0x14000000 | ((((o) - (a)) >> 2) & 0x3FFFFFF)
 
-#define MAKE_KERNEL_PATTERN_NAME(vers, name) g_kernel_patch_##vers_##name
-#define MAKE_KERNEL_HOOK_NAME(vers, name) g_kernel_hook_##vers_##name
+#define MAKE_KERNEL_PATTERN_NAME(vers, name) g_kernel_patch_##vers##_##name
+#define MAKE_KERNEL_HOOK_NAME(vers, name) g_kernel_hook_##vers##_##name
 
 typedef uint32_t instruction_t;
 
@@ -28,6 +28,40 @@ typedef struct {
 
 /* Patch definitions. */
 /*  
+    mov w10, w23
+    lsl x10, x10, #2
+    ldr x10, [x28, x10]
+    mov x9, #0x0000ffffffffffff
+    and x8, x10, x9
+    mov x9, #0xffff000000000000
+    and x10, x10, x9
+    mov x9, #0xfffe000000000000
+    cmp x10, x9
+    beq #12
+    ldr x10, [sp,#0xa0]
+    ldr x8, [x10,#0x2b0]
+    ldr x10, [sp,#0xa0]
+*/
+static const uint8_t MAKE_KERNEL_PATTERN_NAME(400, proc_id_send)[] = {0xEA, 0x53, 0x40, 0xF9, 0x48, 0x59, 0x41, 0xF9, 0xE9, 0x03, 0x17, 0x2A, 0x29, 0xF5, 0x7E, 0xD3};
+static const instruction_t MAKE_KERNEL_HOOK_NAME(400, proc_id_send)[] = {0xF9403BED, 0x2A0E03EA, 0xD37EF54A, 0xF86A69AA, 0x92FFFFE9, 0x8A090148, 0xD2FFFFE9, 0x8A09014A, 0xD2FFFFC9, 0xEB09015F, 0x54000040, 0xF9415B28, 0xD503201F};
+/*  
+    ldr x13, [sp,#0x70]
+    mov w10, w14
+    lsl x10, x10, #2
+    ldr x10, [x13, x10]
+    mov x9, #0x0000ffffffffffff
+    and x8, x10, x9
+    mov x9, #0xffff000000000000
+    and x10, x10, x9
+    mov x9, #0xfffe000000000000
+    cmp x10, x9
+    beq #8
+    ldr x8, [x25,#0x2b0]
+    nop
+*/
+static const uint8_t MAKE_KERNEL_PATTERN_NAME(400, proc_id_recv)[] = {0x28, 0x5B, 0x41, 0xF9, 0xE9, 0x03, 0x0E, 0x2A, 0xCE, 0x09, 0x00, 0x11, 0x29, 0xF5, 0x7E, 0xD3};
+static const instruction_t MAKE_KERNEL_HOOK_NAME(400, proc_id_recv)[] = {0xD280000D, 0x2A0E03ED, 0xD37EF5AD, 0xF86D6B4D, 0x92FFFFE9, 0x8A090148, 0xD2FFFFE9, 0x8A0901AD, 0xD2FFFFC9, 0xEB09015F, 0x54000040, 0xF9415B28, 0xD503201F};
+/*
     mov w10, w23
     lsl x10, x10, #2
     ldr x10, [x27, x10]
@@ -76,7 +110,22 @@ static const kernel_hook_t g_kernel_hooks_302[] = {
     /* TODO */
 };
 static const kernel_hook_t g_kernel_hooks_400[] = {
-    /* TODO */
+    {   /* Send Message Process ID Patch. */
+        .pattern_size = 0x10,
+        .pattern = MAKE_KERNEL_PATTERN_NAME(400, proc_id_send),
+        .pattern_hook_offset = 0x0,
+        .payload_num_instructions = 13,
+        .branch_back_offset = 0x8,
+        .payload = MAKE_KERNEL_HOOK_NAME(400, proc_id_send)
+    },
+    {   /* Receive Message Process ID Patch. */
+        .pattern_size = 0x10,
+        .pattern = MAKE_KERNEL_PATTERN_NAME(400, proc_id_recv),
+        .pattern_hook_offset = 0x0,
+        .payload_num_instructions = 13,
+        .branch_back_offset = 0x4,
+        .payload = MAKE_KERNEL_HOOK_NAME(400, proc_id_recv)
+    }
 };
 static const kernel_hook_t g_kernel_hooks_500[] = {
     {   /* Send Message Process ID Patch. */
@@ -111,8 +160,8 @@ static const kernel_info_t g_kernel_infos[] = {
         KERNEL_HOOKS(200)
     },
     {   /* 3.0.0. */
-        /* TODO */
-        .free_code_space_offset = 0,
+        .hash = {0x50, 0x84, 0x23, 0xAC, 0x6F, 0xA1, 0x5D, 0x3B, 0x56, 0xC2, 0xFC, 0x95, 0x22, 0xCC, 0xD5, 0xA8, 0x15, 0xD3, 0xB4, 0x6B, 0xA1, 0x2C, 0xF2, 0x93, 0xD3, 0x02, 0x05, 0xAB, 0x52, 0xEF, 0x73, 0xC5},
+        .free_code_space_offset = 0x494A4,
         KERNEL_HOOKS(300)
     },
     {   /* 3.0.2. */
@@ -122,7 +171,7 @@ static const kernel_info_t g_kernel_infos[] = {
     },
     {   /* 4.0.0. */
         .hash = {0xE6, 0xC0, 0xB7, 0xE3, 0x2F, 0xF9, 0x44, 0x51, 0xEC, 0xD5, 0x95, 0x79, 0xE3, 0x46, 0xB1, 0xDA, 0x2E, 0xD9, 0x28, 0xC6, 0xF2, 0x31, 0x4F, 0x95, 0xD8, 0xC7, 0xD5, 0xBD, 0x15, 0xD5, 0xE2, 0x5A},
-        .free_code_space_offset = 0x52890,
+        .free_code_space_offset = 0x4FBC0,
         KERNEL_HOOKS(400)
     },
     {   /* 5.0.0. */
@@ -146,7 +195,7 @@ uint8_t *search_pattern(void *_mem, size_t mem_size, const void *_pattern, size_
     }
     
     for (unsigned int i = 0; i <= mem_size - pattern_size; i += table[mem[i + pattern_size - 1]]) {
-        if (pattern[pattern_size - 1] == table[mem[i + pattern_size - 1]] && memcmp(pattern, mem + i, pattern_size - 1) == 0) {
+        if (pattern[pattern_size - 1] == mem[i + pattern_size - 1] && memcmp(pattern, mem + i, pattern_size - 1) == 0) {
             return mem + i;
         }
     }

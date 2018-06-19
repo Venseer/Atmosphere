@@ -10,12 +10,16 @@ enum DebugMonitorServiceCmd {
     Dmnt_Cmd_GetNsoInfo = 2
 };
 
-class DebugMonitorService final : IServiceObject {
+class DebugMonitorService final : public IServiceObject {
     public:
         Result dispatch(IpcParsedCommand &r, IpcCommand &out_c, u64 cmd_id, u8 *pointer_buffer, size_t pointer_buffer_size) override;
         Result handle_deferred() override {
             /* This service will never defer. */
             return 0;
+        }
+        
+        DebugMonitorService *clone() override {
+            return new DebugMonitorService();
         }
         
     private:

@@ -6,31 +6,43 @@
 #include "../boost/callable_traits.hpp"
 #include <type_traits>
 
+#include "domainowner.hpp"
+
 #pragma GCC diagnostic push 
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 
+/* Base for In/Out Buffers. */
+struct IpcBufferBase {};
+
 /* Represents an A descriptor. */
-template <typename T>
-struct InBuffer {
+struct InBufferBase : IpcBufferBase {};
+
+template <typename T, BufferType e_t = BufferType_Normal>
+struct InBuffer : InBufferBase {
     T *buffer;
     size_t num_elements;
     BufferType type;
+    static const BufferType expected_type = e_t;
     
-    InBuffer(void *b, size_t n) : buffer((T *)b), num_elements(n/sizeof(T)) { }
+    InBuffer(void *b, size_t n, BufferType t) : buffer((T *)b), num_elements(n/sizeof(T)), type(t) { }
 };
 
 /* Represents a B descriptor. */
-template <typename T>
-struct OutBuffer {
+struct OutBufferBase : IpcBufferBase {};
+
+template <typename T, BufferType e_t = BufferType_Normal>
+struct OutBuffer : OutBufferBase {
     T *buffer;
     size_t num_elements;
+    BufferType type;
+    static const BufferType expected_type = e_t;
     
-    OutBuffer(void *b, size_t n) : buffer((T *)b), num_elements(n/sizeof(T)) { }
+    OutBuffer(void *b, size_t n, BufferType t) : buffer((T *)b), num_elements(n/sizeof(T)), type(t) { }
 };
 
 /* Represents an X descriptor. */
 template <typename T>
-struct InPointer {
+struct InPointer : IpcBufferBase {
     T *pointer;
     size_t num_elements;
     
@@ -38,7 +50,7 @@ struct InPointer {
 };
 
 /* Represents a C descriptor. */
-struct OutPointerWithServerSizeBase {};
+struct OutPointerWithServerSizeBase : IpcBufferBase {};
  
 template <typename T, size_t n>
 struct OutPointerWithServerSize : OutPointerWithServerSizeBase {
@@ -50,7 +62,7 @@ struct OutPointerWithServerSize : OutPointerWithServerSizeBase {
 
 /* Represents a C descriptor with size in raw data. */
 template <typename T>
-struct OutPointerWithClientSize {
+struct OutPointerWithClientSize : IpcBufferBase {
     T *pointer;
     size_t num_elements;
     
@@ -78,6 +90,21 @@ struct CopiedHandle {
     CopiedHandle(Handle h) : handle(h) { }
 };
 
+/* Forward declarations. */
+template <typename T>
+class ISession;
+
+/* Represents an output ServiceObject. */
+struct OutSessionBase {};
+
+template <typename T>
+struct OutSession : OutSessionBase {
+    ISession<T> *session;
+    u32 domain_id;
+    
+    OutSession(ISession<T> *s) : session(s), domain_id(DOMAIN_ID_MAX) { }
+};
+
 /* Utilities. */
 template <typename T, template <typename...> class Template>
 struct is_specialization_of {
@@ -99,11 +126,7 @@ struct pop_front<std::tuple<Head, Tail...>> {
 
 template <typename T>
 struct is_ipc_buffer {
-    static const bool value = is_specialization_of<T, InBuffer>::value 
-                           || is_specialization_of<T, OutBuffer>::value 
-                           || is_specialization_of<T, InPointer>::value 
-                           || std::is_base_of<OutPointerWithServerSizeBase, T>::value 
-                           || is_specialization_of<T, OutPointerWithClientSize>::value;
+    static const bool value = std::is_base_of<IpcBufferBase, T>::value;
 };
 
 template <typename T>
@@ -112,13 +135,23 @@ struct is_ipc_handle {
 };
 
 template <typename T>
+struct is_out_session {
+    static const bool value = std::is_base_of<OutSessionBase, T>::value;
+};
+
+template <typename T>
 struct size_in_raw_data {
-    static const size_t value = (is_ipc_buffer<T>::value || is_ipc_handle<T>::value) ? 0 : ((sizeof(T) < sizeof(u32)) ? sizeof(u32) : (sizeof(T) + 3) & (~3));
+    static const size_t value = (is_ipc_buffer<T>::value || is_ipc_handle<T>::value || is_out_session<T>::value) ? 0 : ((sizeof(T) < sizeof(u32)) ? sizeof(u32) : (sizeof(T) + 3) & (~3));
 };
 
 template <typename ...Args>
 struct size_in_raw_data_for_arguments {
     static const size_t value = (size_in_raw_data<Args>::value + ... + 0);
+};
+
+template <typename ...Args>
+struct num_out_sessions_in_arguments {
+    static const size_t value = ((is_out_session<Args>::value ? 1 : 0) + ... + 0);
 };
 
 template <typename T>
@@ -133,7 +166,7 @@ struct size_in_raw_data_with_out_pointers_for_arguments {
 
 template <typename T>
 struct is_ipc_inbuffer {
-    static const size_t value = (is_specialization_of<T, InBuffer>::value) ? 1 : 0;
+    static const size_t value = (std::is_base_of<InBufferBase, T>::value) ? 1 : 0;
 };
 
 template <typename ...Args>
@@ -163,7 +196,7 @@ struct num_outpointers_in_arguments {
 
 template <typename T>
 struct is_ipc_inoutbuffer {
-    static const size_t value = (is_specialization_of<T, InBuffer>::value || is_specialization_of<T, OutBuffer>::value) ? 1 : 0;
+    static const size_t value = (std::is_base_of<InBufferBase, T>::value || std::is_base_of<OutBufferBase, T>::value) ? 1 : 0;
 };
 
 template <typename ...Args>
@@ -186,12 +219,12 @@ T GetValueFromIpcParsedCommand(IpcParsedCommand& r, IpcCommand& out_c, u8 *point
     const size_t old_rawdata_index = cur_rawdata_index;
     const size_t old_c_size_offset = cur_c_size_offset;
     const size_t old_pointer_buffer_offset = pointer_buffer_offset;
-    if constexpr (is_specialization_of<T, InBuffer>::value) {
-        const T& value{r.Buffers[a_index], r.BufferSizes[a_index]};
+    if constexpr (std::is_base_of<InBufferBase, T>::value) {
+        const T& value = T(r.Buffers[a_index], r.BufferSizes[a_index], r.BufferTypes[a_index]);
         ++a_index;
         return value;
-    } else if constexpr (is_specialization_of<T, OutBuffer>::value) {
-        const T& value{r.Buffers[b_index], r.BufferSizes[b_index]};
+    } else if constexpr (std::is_base_of<OutBufferBase, T>::value) {
+        const T& value = T(r.Buffers[b_index], r.BufferSizes[b_index], r.BufferTypes[b_index]);
         ++b_index;
         return value;
     } else if constexpr (is_specialization_of<T, InPointer>::value) {
@@ -226,10 +259,10 @@ T GetValueFromIpcParsedCommand(IpcParsedCommand& r, IpcCommand& out_c, u8 *point
 template <typename T>
 bool ValidateIpcParsedCommandArgument(IpcParsedCommand& r, size_t& cur_rawdata_index, size_t& cur_c_size_offset, size_t& a_index, size_t& b_index, size_t& x_index, size_t& c_index, size_t& h_index, size_t& total_c_size) {
     const size_t old_c_size_offset = cur_c_size_offset;
-    if constexpr (is_specialization_of<T, InBuffer>::value) {
-        return r.Buffers[a_index] != NULL && r.BufferDirections[a_index++] == BufferDirection_Send;
-    } else if constexpr (is_specialization_of<T, OutBuffer>::value) {
-        return r.Buffers[b_index] != NULL && r.BufferDirections[b_index++] == BufferDirection_Recv;
+    if constexpr (std::is_base_of<InBufferBase, T>::value) {
+        return r.Buffers[a_index] != NULL && r.BufferDirections[a_index] == BufferDirection_Send && r.BufferTypes[a_index++] == T::expected_type;
+    } else if constexpr (std::is_base_of<OutBufferBase, T>::value) {
+        return r.Buffers[b_index] != NULL && r.BufferDirections[b_index] == BufferDirection_Recv && r.BufferTypes[b_index++] == T::expected_type;
     } else if constexpr (is_specialization_of<T, InPointer>::value) {
         return r.Statics[x_index] != NULL;
     } else if constexpr (std::is_base_of<OutPointerWithServerSizeBase, T>::value) {
@@ -287,6 +320,10 @@ struct Validator<std::tuple<Args...>> {
             return 0xF601;
         }
         
+        if (((u32 *)r.Raw)[0] != SFCI_MAGIC) {
+            //return 0xF601;
+        }
+        
         size_t a_index = 0, b_index = num_inbuffers_in_arguments<Args ...>::value, x_index = 0, c_index = 0, h_index = 0;
 		size_t cur_rawdata_index = 4;
         size_t cur_c_size_offset = 0x10 + size_in_raw_data_for_arguments<Args... >::value + (0x10 - ((uintptr_t)r.Raw - (uintptr_t)r.RawWithoutPadding));
@@ -328,33 +365,55 @@ template<typename ArgsTuple>
 struct Encoder;
 
 template<typename T>
-constexpr size_t GetAndUpdateOffsetIntoRawData(size_t& offset) {
+constexpr size_t GetAndUpdateOffsetIntoRawData(DomainOwner *domain_owner, size_t& offset) {
 	auto old = offset;
             
     if (old == 0) {
         offset += sizeof(u64);
     } else {
-        offset += size_in_raw_data<T>::value;    
+        if constexpr (is_out_session<T>::value) {
+            if (domain_owner) {
+                offset += sizeof(u32);
+            }
+        } else {
+            offset += size_in_raw_data<T>::value;   
+        } 
     }
 
 	return old;
 }
 
 template<typename T>
-void EncodeValueIntoIpcMessageBeforePrepare(IpcCommand *c, T value) {
+void EncodeValueIntoIpcMessageBeforePrepare(DomainOwner *domain_owner, IpcCommand *c, T &value) {
     if constexpr (std::is_same<T, MovedHandle>::value) {
         ipcSendHandleMove(c, value.handle);
     } else if constexpr (std::is_same<T, CopiedHandle>::value) {
         ipcSendHandleCopy(c, value.handle);
     } else if constexpr (std::is_same<T, PidDescriptor>::value) {
         ipcSendPid(c);
+    } else if constexpr (is_out_session<T>::value) {
+        if (domain_owner && value.session) {
+            /* TODO: Check error... */
+            if (value.domain_id != DOMAIN_ID_MAX) {
+                domain_owner->set_object(value.session->get_service_object(), value.domain_id);
+            } else {
+                domain_owner->reserve_object(value.session->get_service_object(), &value.domain_id);
+            }
+            value.session->close_handles();
+        } else {
+            ipcSendHandleMove(c, value.session ? value.session->get_client_handle() : 0x0);
+        }
     }
 }
 
 template<typename T>
-void EncodeValueIntoIpcMessageAfterPrepare(u8 *cur_out, T value) {
+void EncodeValueIntoIpcMessageAfterPrepare(DomainOwner *domain_owner, u8 *cur_out, T value) {
     if constexpr (is_ipc_handle<T>::value || std::is_same<T, PidDescriptor>::value) {
         /* Do nothing. */
+    } else if constexpr (is_out_session<T>::value) {
+        if (domain_owner) {
+            *((u32 *)cur_out) = value.domain_id;
+        }
     } else {
         *((T *)(cur_out)) = value;
     }
@@ -364,7 +423,7 @@ template<typename... Args>
 struct Encoder<std::tuple<Args...>> {
     IpcCommand &out_command;
     
-	auto operator()(Args... args) {
+	auto operator()(DomainOwner *domain_owner, Args... args) {
         static_assert(sizeof...(Args) > 0, "IpcCommandImpls must return std::tuple<Result, ...>");
 		size_t offset = 0;
         
@@ -372,19 +431,26 @@ struct Encoder<std::tuple<Args...>> {
         
         std::fill(tls, tls + 0x100, 0x00);
         
-        ((EncodeValueIntoIpcMessageBeforePrepare<Args>(&out_command, args)), ...);
+        ((EncodeValueIntoIpcMessageBeforePrepare<Args>(domain_owner, &out_command, args)), ...);
         
         /* Remove the extra space resulting from first Result type. */
         struct {
             u64 magic;
             u64 result;
-        } *raw = (decltype(raw))ipcPrepareHeader(&out_command, sizeof(*raw) + size_in_raw_data_for_arguments<Args... >::value - sizeof(Result));
+        } *raw;
+        if (domain_owner == NULL) {
+            raw = (decltype(raw))ipcPrepareHeader(&out_command, sizeof(*raw) + size_in_raw_data_for_arguments<Args... >::value - sizeof(Result));
+        } else {
+            raw = (decltype(raw))ipcPrepareHeaderForDomain(&out_command, sizeof(*raw) + size_in_raw_data_for_arguments<Args... >::value + (num_out_sessions_in_arguments<Args... >::value * sizeof(u32)) - sizeof(Result), 0);
+            *((DomainMessageHeader *)((uintptr_t)raw - sizeof(DomainMessageHeader))) = {0};
+        }
+        
         
         raw->magic = SFCO_MAGIC;
         
         u8 *raw_data = (u8 *)&raw->result;
         
-        ((EncodeValueIntoIpcMessageAfterPrepare<Args>(raw_data + GetAndUpdateOffsetIntoRawData<Args>(offset), args)), ...);
+        ((EncodeValueIntoIpcMessageAfterPrepare<Args>(domain_owner, raw_data + GetAndUpdateOffsetIntoRawData<Args>(domain_owner, offset), args)), ...);
         
         Result rc = raw->result;
                         
@@ -418,7 +484,9 @@ Result WrapDeferredIpcCommandImpl(Class *this_ptr, Args... args) {
     auto tuple_args = std::make_tuple(args...);
     auto result = std::apply( [=](auto&&... a) { return (this_ptr->*IpcCommandImpl)(a...); }, tuple_args);
     
-    return std::apply(Encoder<OutArgs>{out_command}, result);
+    DomainOwner *down = NULL;
+    
+    return std::apply(Encoder<OutArgs>{out_command}, std::tuple_cat(std::make_tuple(down), result));
 }
 
 template<auto IpcCommandImpl, typename Class>
@@ -440,8 +508,12 @@ Result WrapIpcCommandImpl(Class *this_ptr, IpcParsedCommand& r, IpcCommand &out_
 
     auto args = Decoder<OutArgs, InArgsWithoutThis>::Decode(r, out_command, pointer_buffer);    
     auto result = std::apply( [=](auto&&... args) { return (this_ptr->*IpcCommandImpl)(args...); }, args);
+    DomainOwner *down = NULL;
+    if (r.IsDomainMessage) {
+        down = this_ptr->get_owner();
+    }
     
-    return std::apply(Encoder<OutArgs>{out_command}, result);
+    return std::apply(Encoder<OutArgs>{out_command}, std::tuple_cat(std::make_tuple(down), result));
 }
 
 template<auto IpcCommandImpl>
@@ -462,8 +534,11 @@ Result WrapStaticIpcCommandImpl(IpcParsedCommand& r, IpcCommand &out_command, u8
 
     auto args = Decoder<OutArgs, InArgs>::Decode(r, out_command, pointer_buffer);    
     auto result = std::apply(IpcCommandImpl, args);
+    DomainOwner *down = NULL;
     
-    return std::apply(Encoder<OutArgs>{out_command}, result);
+    return std::apply(Encoder<OutArgs>{out_command}, std::tuple_cat(std::make_tuple(down), result));
 }
 
 #pragma GCC diagnostic pop
+
+#include "isession.hpp"
