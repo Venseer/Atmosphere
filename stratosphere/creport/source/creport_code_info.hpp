@@ -1,5 +1,6 @@
 #pragma once
 #include <switch.h>
+#include <cstdio>
 
 #include "creport_debug_types.hpp"
 
@@ -16,9 +17,10 @@ class CodeList {
         u32 code_count;
         CodeInfo code_infos[max_code_count];
     public:
-        CodeList() : code_count(0), code_infos({}) { }
+        CodeList() : code_count(0) { }
         
         void ReadCodeRegionsFromProcess(Handle debug_handle, u64 pc, u64 lr);
+        void SaveToFile(FILE *f_report);
     private:
         bool TryFindCodeRegion(Handle debug_handle, u64 guess, u64 *address);
         void GetCodeInfoName(u64 debug_handle, u64 ro_address, char *name);
