@@ -1,129 +1,105 @@
-#include <switch.h>
-#include <stratosphere/servicesession.hpp>
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+#include <stratosphere.hpp>
 #include "sm_user_service.hpp"
-#include "sm_registration.hpp"
+#include "impl/sm_service_manager.hpp"
 
-Result UserService::dispatch(IpcParsedCommand &r, IpcCommand &out_c, u64 cmd_id, u8 *pointer_buffer, size_t pointer_buffer_size) {
-    Result rc = 0xF601; 
-    switch ((UserServiceCmd)cmd_id) {
-        case User_Cmd_Initialize:
-            rc = WrapIpcCommandImpl<&UserService::initialize>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-        case User_Cmd_GetService:
-            rc = WrapIpcCommandImpl<&UserService::get_service>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-        case User_Cmd_RegisterService:
-            rc = WrapIpcCommandImpl<&UserService::register_service>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-        case User_Cmd_UnregisterService:
-            rc = WrapIpcCommandImpl<&UserService::unregister_service>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-#ifdef SM_ENABLE_MITM
-        case User_Cmd_AtmosphereInstallMitm:
-            rc = WrapIpcCommandImpl<&UserService::install_mitm>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-        case User_Cmd_AtmosphereUninstallMitm:
-            rc = WrapIpcCommandImpl<&UserService::uninstall_mitm>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-        case User_Cmd_AtmosphereAssociatePidTidForMitm:
-            rc = WrapIpcCommandImpl<&UserService::associate_pid_tid_for_mitm>(this, r, out_c, pointer_buffer, pointer_buffer_size);
-            break;
-#endif
-        default:
-            break;
-    }
-    return rc;
-}
+namespace ams::sm {
 
-Result UserService::handle_deferred() {
-    /* If we're deferred, GetService failed. */
-    return WrapDeferredIpcCommandImpl<&UserService::deferred_get_service>(this, this->deferred_service);;
-}
-
-
-std::tuple<Result> UserService::initialize(PidDescriptor pid) {
-    this->pid = pid.pid;
-    this->has_initialized = true;
-    return {0};
-}
-
-std::tuple<Result, MovedHandle> UserService::get_service(u64 service) {
-    Handle session_h = 0;
-    Result rc = 0x415;
-#ifdef SM_ENABLE_SMHAX
-    if (!this->has_initialized) {
-        rc = Registration::GetServiceForPid(Registration::GetInitialProcessId(), service, &session_h);
-    }
-#endif
-    if (this->has_initialized) {
-        rc = Registration::GetServiceForPid(this->pid, service, &session_h);
-    }
-    /* It's possible that this will end up deferring us...take that into account. */
-    if (rc == RESULT_DEFER_SESSION) {
-        this->deferred_service = service;
-    }
-    return {rc, MovedHandle{session_h}};
-}
-
-std::tuple<Result, MovedHandle> UserService::deferred_get_service(u64 service) {
-    Handle session_h = 0;
-    Result rc = Registration::GetServiceHandle(this->pid, service, &session_h);
-    return {rc, MovedHandle{session_h}};
-}
-
-std::tuple<Result, MovedHandle> UserService::register_service(u64 service, u8 is_light, u32 max_sessions) {
-    Handle service_h = 0;
-    Result rc = 0x415;
-#ifdef SM_ENABLE_SMHAX
-    if (!this->has_initialized) {
-        rc = Registration::RegisterServiceForPid(Registration::GetInitialProcessId(), service, max_sessions, (is_light & 1) != 0, &service_h);
-    }
-#endif
-    if (this->has_initialized) {
-        rc = Registration::RegisterServiceForPid(this->pid, service, max_sessions, (is_light & 1) != 0, &service_h);
-    }
-    return {rc, MovedHandle{service_h}};
-}
-
-std::tuple<Result> UserService::unregister_service(u64 service) {
-    Result rc = 0x415;
-#ifdef SM_ENABLE_SMHAX
-    if (!this->has_initialized) {
-        rc = Registration::UnregisterServiceForPid(Registration::GetInitialProcessId(), service);
-    }
-#endif
-    if (this->has_initialized) {
-        rc = Registration::UnregisterServiceForPid(this->pid, service);
-    }
-    return {rc};
-}
-
-std::tuple<Result, MovedHandle, MovedHandle> UserService::install_mitm(u64 service) {
-    Handle service_h = 0;
-    Handle query_h = 0;
-    Result rc = 0x415;
-    if (this->has_initialized) {
-        rc = Registration::InstallMitmForPid(this->pid, service, &service_h, &query_h);
-    }
-    return {rc, MovedHandle{service_h}, MovedHandle{query_h}};
-}
-
-std::tuple<Result> UserService::associate_pid_tid_for_mitm(u64 pid, u64 tid) {
-    Result rc = 0x415;
-    if (this->has_initialized) {
-        if (Registration::IsInitialProcess(pid)) {
-            rc = 0x1015;
-        } else {
-            rc = Registration::AssociatePidTidForMitm(pid, tid);
+    UserService::~UserService() {
+        if (this->has_initialized) {
+            impl::OnClientDisconnected(this->process_id);
         }
     }
-    return {rc};
-}
 
-std::tuple<Result> UserService::uninstall_mitm(u64 service) {
-    Result rc = 0x415;
-    if (this->has_initialized) {
-        rc = Registration::UninstallMitmForPid(this->pid, service);
+    Result UserService::RegisterClient(const sf::ClientProcessId &client_process_id) {
+        this->process_id = client_process_id.GetValue();
+        this->has_initialized = true;
+        return ResultSuccess();
     }
-    return {rc};
+
+    Result UserService::EnsureInitialized() {
+        R_UNLESS(this->has_initialized, sm::ResultInvalidClient());
+        return ResultSuccess();
+    }
+
+    Result UserService::GetServiceHandle(sf::OutMoveHandle out_h, ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::GetServiceHandle(out_h.GetHandlePointer(), this->process_id, service);
+    }
+
+    Result UserService::RegisterService(sf::OutMoveHandle out_h, ServiceName service, u32 max_sessions, bool is_light) {
+        R_TRY(this->EnsureInitialized());
+        return impl::RegisterService(out_h.GetHandlePointer(), this->process_id, service, max_sessions, is_light);
+    }
+
+    Result UserService::UnregisterService(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::UnregisterService(this->process_id, service);
+    }
+
+    Result UserService::DetachClient(const sf::ClientProcessId &client_process_id) {
+        this->has_initialized = false;
+        return ResultSuccess();
+    }
+
+    Result UserService::AtmosphereInstallMitm(sf::OutMoveHandle srv_h, sf::OutMoveHandle qry_h, ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::InstallMitm(srv_h.GetHandlePointer(), qry_h.GetHandlePointer(), this->process_id, service);
+    }
+
+    Result UserService::AtmosphereUninstallMitm(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::UninstallMitm(this->process_id, service);
+    }
+
+    Result UserService::AtmosphereAcknowledgeMitmSession(sf::Out<MitmProcessInfo> client_info, sf::OutMoveHandle fwd_h, ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::AcknowledgeMitmSession(client_info.GetPointer(), fwd_h.GetHandlePointer(), this->process_id, service);
+    }
+
+    Result UserService::AtmosphereHasMitm(sf::Out<bool> out, ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::HasMitm(out.GetPointer(), service);
+    }
+
+    Result UserService::AtmosphereWaitMitm(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::WaitMitm(service);
+    }
+
+    Result UserService::AtmosphereDeclareFutureMitm(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::DeclareFutureMitm(this->process_id, service);
+    }
+
+    Result UserService::AtmosphereClearFutureMitm(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::ClearFutureMitm(this->process_id, service);
+    }
+
+
+    Result UserService::AtmosphereHasService(sf::Out<bool> out, ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::HasService(out.GetPointer(), service);
+    }
+
+    Result UserService::AtmosphereWaitService(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::WaitService(service);
+    }
+
 }

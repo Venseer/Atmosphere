@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #ifndef FUSEE_PACKAGE2_H
 #define FUSEE_PACKAGE2_H
 
@@ -17,14 +33,30 @@
 #define PACKAGE2_MAXVER_300 0x4
 #define PACKAGE2_MAXVER_302 0x5
 #define PACKAGE2_MAXVER_400_410 0x6
-#define PACKAGE2_MAXVER_500_CURRENT 0x7
+#define PACKAGE2_MAXVER_500_510 0x7
+#define PACKAGE2_MAXVER_600_610 0x8
+#define PACKAGE2_MAXVER_620 0x9
+#define PACKAGE2_MAXVER_700_800 0xA
+#define PACKAGE2_MAXVER_810 0xB
+#define PACKAGE2_MAXVER_900 0xC
+#define PACKAGE2_MAXVER_910_920 0xD
+#define PACKAGE2_MAXVER_1000 0xE
+#define PACKAGE2_MAXVER_1100_CURRENT 0xF
 
 #define PACKAGE2_MINVER_100 0x3
 #define PACKAGE2_MINVER_200 0x4
 #define PACKAGE2_MINVER_300 0x5
 #define PACKAGE2_MINVER_302 0x6
 #define PACKAGE2_MINVER_400_410 0x7
-#define PACKAGE2_MINVER_500_CURRENT 0x8
+#define PACKAGE2_MINVER_500_510 0x8
+#define PACKAGE2_MINVER_600_610 0x9
+#define PACKAGE2_MINVER_620 0xA
+#define PACKAGE2_MINVER_700_800 0xB
+#define PACKAGE2_MINVER_810 0xC
+#define PACKAGE2_MINVER_900 0xD
+#define PACKAGE2_MINVER_910_920 0xE
+#define PACKAGE2_MINVER_1000 0xF
+#define PACKAGE2_MINVER_1100_CURRENT 0x10
 
 #define NX_BOOTLOADER_PACKAGE2_LOAD_ADDRESS ((void *)(0xA9800000ull))
 
@@ -57,13 +89,13 @@ typedef struct {
 /* Package2 can be encrypted or unencrypted for these functions: */
 
 static inline size_t package2_meta_get_size(const package2_meta_t *metadata) {
-    return metadata->ctr_dwords[0] ^ metadata->ctr_dwords[2] ^ metadata->ctr_dwords[3]; 
+    return metadata->ctr_dwords[0] ^ metadata->ctr_dwords[2] ^ metadata->ctr_dwords[3];
 }
 
 static inline uint8_t package2_meta_get_header_version(const package2_meta_t *metadata) {
     return (uint8_t)((metadata->ctr_dwords[1] ^ (metadata->ctr_dwords[1] >> 16) ^ (metadata->ctr_dwords[1] >> 24)) & 0xFF);
 }
 
-void package2_rebuild_and_copy(package2_header_t *package2, uint32_t target_firmware);
+void package2_rebuild_and_copy(package2_header_t *package2, uint32_t target_firmware, void *mesosphere, size_t mesosphere_size, void *emummc, size_t emummc_size);
 
 #endif

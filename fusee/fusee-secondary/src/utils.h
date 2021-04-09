@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
 #ifndef FUSEE_UTILS_H
 #define FUSEE_UTILS_H
 
@@ -102,16 +118,15 @@ static inline bool check_32bit_address_range_in_program(uintptr_t addr, size_t s
     overlaps_a(start, end, __start__, __end__);
 }
 
-void hexdump(const void* data, size_t size, uintptr_t addrbase);
-
 __attribute__((noreturn)) void watchdog_reboot(void);
 __attribute__((noreturn)) void pmc_reboot(uint32_t scratch0);
-__attribute__((noreturn)) void car_reboot(void);
+__attribute__((noreturn)) void reboot_to_fusee_primary(void);
+__attribute__((noreturn)) void reboot_to_sept(const void *tsec_fw, size_t tsec_fw_length, const void *stage2, size_t stage2_size);
+__attribute__((noreturn)) void reboot_to_iram_payload(void *payload, size_t payload_size);
 __attribute__((noreturn)) void wait_for_button_and_reboot(void);
+void wait_for_button(void);
 
 __attribute__((noreturn)) void generic_panic(void);
-
 __attribute__((noreturn)) void fatal_error(const char *fmt, ...);
-
 
 #endif

@@ -1,9 +1,25 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
 #ifndef FUSEE_GPT_H
 #define FUSEE_GPT_H
 
 #include <stdio.h>
-
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef struct efi_entry_t {
     uint8_t type_uuid[16];
@@ -36,6 +52,7 @@ typedef struct efi_header {
 } __attribute__((packed, aligned(4))) efi_header_t;
 
 typedef int (*gpt_entry_iterator_t)(const efi_entry_t *entry, void *param, size_t entry_offset, FILE *disk);
+typedef int (*gpt_emu_entry_iterator_t)(const efi_entry_t *entry, void *param, size_t entry_offset, FILE *disk, const char *origin_path, int num_parts, uint64_t part_limit);
 
 int gpt_get_header(efi_header_t *out, FILE *disk, size_t sector_size);
 int gpt_iterate_through_entries(FILE *disk, size_t sector_size, gpt_entry_iterator_t callback, void *param);

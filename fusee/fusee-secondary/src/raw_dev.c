@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -61,9 +77,6 @@ static rawdev_device_t *rawdev_find_device(const char *name) {
 
 int rawdev_mount_device(const char *name, const device_partition_t *devpart, bool initialize_immediately) {
     rawdev_device_t *device = NULL;
-    char drname[40];
-    strcpy(drname, name);
-    strcat(drname, ":");
 
     if (name[0] == '\0' || devpart == NULL) {
         errno = EINVAL;
@@ -185,6 +198,19 @@ int rawdev_unmount_device(const char *name) {
     free(device->tmp_sector);
     device->devpart.finalizer(&device->devpart);
     memset(device, 0, sizeof(rawdev_device_t));
+
+    return 0;
+}
+
+int rawdev_register_keys(const char *name, unsigned int target_firmware, BisPartition part) {
+    rawdev_device_t *device = rawdev_find_device(name);
+
+    if (device == NULL) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    derive_bis_key(device->devpart.keys, part, target_firmware);
 
     return 0;
 }

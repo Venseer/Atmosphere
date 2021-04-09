@@ -1,18 +1,32 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
 #include "panic.h"
+#include "di.h"
 #include "pmc.h"
 #include "fuse.h"
 #include "utils.h"
-#include "hwinit.h"
 
 static uint32_t g_panic_code = 0;
 
 void check_and_display_panic(void) {
     /* We also handle our own panics. */
-    /* In the case of our own panics, we assume that the display has already been initialized. */
-    bool has_panic = APBDEV_PMC_RST_STATUS_0 != 0 || g_panic_code != 0;
-    uint32_t code = g_panic_code == 0 ? APBDEV_PMC_SCRATCH200_0 : g_panic_code;
-
-    has_panic = has_panic && !(APBDEV_PMC_RST_STATUS_0 != 1 && code == PANIC_CODE_SAFEMODE);
+    bool has_panic = ((APBDEV_PMC_RST_STATUS_0 != 0) || (g_panic_code != 0));
+    uint32_t code = (g_panic_code == 0) ? APBDEV_PMC_SCRATCH200_0 : g_panic_code;
+    has_panic = has_panic && !((APBDEV_PMC_RST_STATUS_0 != 1) && (code == PANIC_CODE_SAFEMODE));
 
     if (has_panic) {
         uint32_t color;
@@ -55,11 +69,13 @@ void check_and_display_panic(void) {
                 break;
         }
 
-        if (g_panic_code == 0) {
-            display_init();
-        }
-
+        /* Initialize the display. */
+        display_init();
+        
+        /* Fill the screen. */
         display_color_screen(color);
+        
+        /* Wait for button and reboot. */
         wait_for_button_and_reboot();
     } else {
         g_panic_code = 0;

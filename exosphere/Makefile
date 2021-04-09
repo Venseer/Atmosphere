@@ -1,158 +1,75 @@
-#---------------------------------------------------------------------------------
-.SUFFIXES:
-#---------------------------------------------------------------------------------
+ATMOSPHERE_BUILD_CONFIGS :=
+all: release
 
-ifeq ($(strip $(DEVKITPRO)),)
-$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
-endif
+define ATMOSPHERE_ADD_TARGET
 
-TOPDIR ?= $(CURDIR)
-include $(DEVKITPRO)/devkitA64/base_rules
+ATMOSPHERE_BUILD_CONFIGS += $(strip $1)
 
-#---------------------------------------------------------------------------------
-# TARGET is the name of the output
-# BUILD is the directory where object files & intermediate files will be placed
-# SOURCES is a list of directories containing source code
-# DATA is a list of directories containing data files
-# INCLUDES is a list of directories containing header files
-#---------------------------------------------------------------------------------
-TARGET		:=	$(notdir $(CURDIR))
-BUILD		:=	build
-SOURCES		:=	src src/dbg
-DATA		:=	data
-INCLUDES	:=	include
+$(strip $1): exosphere$(strip $2).bin warmboot$(strip $2).bin mariko_fatal$(strip $2).bin
 
-#---------------------------------------------------------------------------------
-# options for code generation
-#---------------------------------------------------------------------------------
-ARCH	:=	-march=armv8-a -mtune=cortex-a57
-DEFINES	:=	-D__CCPLEX__
-CFLAGS	:= \
-	-g \
-	-O2 \
-	-ffunction-sections \
-	-fdata-sections \
-	-fomit-frame-pointer \
-	-std=gnu11 \
-	-Werror \
-	-Wall \
-	$(ARCH) $(DEFINES)
+exosphere$(strip $2).bin: loader_stub/loader_stub$(strip $2).bin
+	@cp loader_stub/loader_stub$(strip $2).bin exosphere$(strip $2).bin
+	@printf LENY >> exosphere$(strip $2).bin
+	@echo "Built exosphere$(strip $2).bin..."
 
-CFLAGS	+=	$(INCLUDE)
+warmboot$(strip $2).bin: warmboot/warmboot$(strip $2).bin
+	@cp warmboot/warmboot$(strip $2).bin warmboot$(strip $2).bin
+	@echo "Built warmboot$(strip $2).bin..."
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+mariko_fatal$(strip $2).bin: mariko_fatal/mariko_fatal$(strip $2).bin
+	@cp mariko_fatal/mariko_fatal$(strip $2).bin mariko_fatal$(strip $2).bin
+	@echo "Built mariko_fatal$(strip $2).bin..."
 
-ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	=	-specs=$(TOPDIR)/linker.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+check_program_$(strip $1):
+	@$$(MAKE) -C program $(strip $1)
 
-LIBS	:=
+check_warmboot_$(strip $1):
+	@$$(MAKE) -C warmboot $(strip $1)
 
-#---------------------------------------------------------------------------------
-# list of directories containing libraries, this must be the top level containing
-# include and lib
-#---------------------------------------------------------------------------------
-LIBDIRS	:=
+check_mariko_fatal_$(strip $1):
+	@$$(MAKE) -C mariko_fatal $(strip $1)
 
+loader_stub/loader_stub$(strip $2).bin: check_program_$(strip $1)
+	@$$(MAKE) -C loader_stub $(strip $1)
 
-#---------------------------------------------------------------------------------
-# no real need to edit anything past this point unless you need to add additional
-# rules for different file extensions
-#---------------------------------------------------------------------------------
-ifneq ($(BUILD),$(notdir $(CURDIR)))
-#---------------------------------------------------------------------------------
+warmboot/warmboot$(strip $2).bin: check_warmboot_$(strip $1)
 
-export OUTPUT	:=	$(CURDIR)/$(TARGET)
-export TOPDIR	:=	$(CURDIR)
+mariko_fatal/mariko_fatal$(strip $2).bin: check_mariko_fatal_$(strip $1)
 
-export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
-			$(foreach dir,$(DATA),$(CURDIR)/$(dir)) \
-			$(TOPDIR)/bpmpfw
+clean-$(strip $1): clean-program-$(strip $1) clean-loader_stub-$(strip $1) clean-warmboot-$(strip $1) clean-mariko_fatal-$(strip $1)
+	@rm -rf exosphere$(strip $2).bin warmboot$(strip $2).bin mariko_fatal$(strip $2).bin
 
-export DEPSDIR	:=	$(CURDIR)/$(BUILD)
+clean-program-$(strip $1):
+	@$$(MAKE) -C program clean-$(strip $1)
 
-CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
-SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*))) bpmpfw.bin
+clean-loader_stub-$(strip $1):
+	@$$(MAKE) -C loader_stub clean-$(strip $1)
 
-#---------------------------------------------------------------------------------
-# use CXX for linking C++ projects, CC for standard C
-#---------------------------------------------------------------------------------
-ifeq ($(strip $(CPPFILES)),)
-#---------------------------------------------------------------------------------
-	export LD	:=	$(CC)
-#---------------------------------------------------------------------------------
-else
-#---------------------------------------------------------------------------------
-	export LD	:=	$(CXX)
-#---------------------------------------------------------------------------------
-endif
-#---------------------------------------------------------------------------------
+clean-warmboot-$(strip $1):
+	@$$(MAKE) -C warmboot clean-$(strip $1)
 
-export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
-export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export OFILES 		:=	$(OFILES_BIN) $(OFILES_SRC)
-export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
+clean-mariko_fatal-$(strip $1):
+	@$$(MAKE) -C mariko_fatal clean-$(strip $1)
 
-export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-			$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-			-I$(CURDIR)/$(BUILD)
+endef
 
-export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+$(eval $(call ATMOSPHERE_ADD_TARGET, release, ))
+$(eval $(call ATMOSPHERE_ADD_TARGET, debug, _debug))
+$(eval $(call ATMOSPHERE_ADD_TARGET, audit, _audit))
 
-.PHONY: $(BUILD) build_bpmpfw clean all
+clean: clean-program clean-loader_stub clean-warmboot
+	@rm -rf exosphere*.bin warmboot*.bin mariko_fatal*.bin
 
-#---------------------------------------------------------------------------------
-all: $(BUILD)
+clean-program:
+	@$(MAKE) -C program clean
 
-check_bpmpfw:
-	@$(MAKE) -C bpmpfw all
+clean-loader_stub:
+	@$(MAKE) -C loader_stub clean
 
-$(BUILD): check_bpmpfw
-	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+clean-warmboot:
+	@$(MAKE) -C warmboot clean
 
-#---------------------------------------------------------------------------------
-clean:
-	@echo clean ...
-	@$(MAKE) -C $(TOPDIR)/bpmpfw clean
-	@rm -fr $(BUILD) $(TARGET).bin $(TARGET).elf
+clean-mariko_fatal:
+	@$(MAKE) -C mariko_fatal clean
 
-
-#---------------------------------------------------------------------------------
-else
-.PHONY:	all
-
-DEPENDS	:=	$(OFILES:.o=.d)
-
-#---------------------------------------------------------------------------------
-# main targets
-#---------------------------------------------------------------------------------
-all	:	$(OUTPUT).bin
-
-$(OUTPUT).bin	:	$(OUTPUT).elf
-	$(OBJCOPY) -S -O binary $< $@
-	@echo built ... $(notdir $@)
-
-$(OUTPUT).elf	:	$(OFILES)
-
-%.elf:
-	@echo linking $(notdir $@)
-	$(LD) $(LDFLAGS) $(OFILES) $(LIBPATHS) $(LIBS) -o $@
-	@$(NM) -CSn $@ > $(notdir $*.lst)
-
-$(OFILES_SRC)	: $(HFILES_BIN)
-
-#---------------------------------------------------------------------------------
-# you need a rule like this for each extension you use as binary data
-#---------------------------------------------------------------------------------
-%.bin.o	%_bin.h:	%.bin
-#---------------------------------------------------------------------------------
-	@echo $(notdir $<)
-	@$(bin2o)
-
--include $(DEPENDS)
-
-#---------------------------------------------------------------------------------------
-endif
-#---------------------------------------------------------------------------------------
+.PHONY: all clean clean-program clean-loader_stub clean-warmboot $(foreach config,$(ATMOSPHERE_BUILD_CONFIGS),check_program_$(config) check_warmboot_$(strip $1) clean-$(config) clean-program-$(config) clean-loader_stub-$(config) clean-warmboot-$(config))

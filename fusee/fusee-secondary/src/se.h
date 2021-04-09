@@ -1,8 +1,24 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #ifndef FUSEE_SE_H
 #define FUSEE_SE_H
 
-#include "utils.h"
-#include <assert.h>
+#define SE_BASE 0x70012000
+#define MAKE_SE_REG(n) MAKE_REG32(SE_BASE + n)
 
 #define KEYSLOT_SWITCH_LP0TZRAMKEY 0x2
 #define KEYSLOT_SWITCH_SRKGENKEY 0x8
@@ -10,13 +26,23 @@
 #define KEYSLOT_SWITCH_TEMPKEY 0x9
 #define KEYSLOT_SWITCH_SESSIONKEY 0xA
 #define KEYSLOT_SWITCH_RNGKEY 0xB
-#define KEYSLOT_SWITCH_MASTERKEY 0xC
-#define KEYSLOT_SWITCH_DEVICEKEY 0xD
+#define KEYSLOT_SWITCH_MASTERKEY 0xD
+#define KEYSLOT_SWITCH_DEVICEKEY 0xC
 
 /* This keyslot was added in 4.0.0. */
 #define KEYSLOT_SWITCH_4XNEWDEVICEKEYGENKEY 0xD
 #define KEYSLOT_SWITCH_4XNEWCONSOLEKEYGENKEY 0xE
 #define KEYSLOT_SWITCH_4XOLDDEVICEKEY 0xF
+
+/* This keyslot was added in 5.0.0. */
+#define KEYSLOT_SWITCH_5XNEWDEVICEKEYGENKEY 0xA
+
+/* Mariko keyslots. */
+#define KEYSLOT_SWITCH_DEVICEKEY_MARIKO 0x6
+#define KEYSLOT_SWITCH_MASTERKEY_MARIKO 0x7
+
+#define KEYSLOT_SWITCH_KEK_MARIKO 0xC
+#define KEYSLOT_SWITCH_BEK_MARIKO 0xD
 
 #define KEYSLOT_AES_MAX 0x10
 #define KEYSLOT_RSA_MAX 0x2
@@ -72,75 +98,61 @@
 
 #define RSA_2048_BYTES 0x100
 
-typedef struct security_engine {
-    uint32_t _0x0;
-    uint32_t _0x4;
-    uint32_t OPERATION_REG;
-    uint32_t INT_ENABLE_REG;
-    uint32_t INT_STATUS_REG;
-    uint32_t CONFIG_REG;
-    uint32_t IN_LL_ADDR_REG;
-    uint32_t _0x1C;
-    uint32_t _0x20;
-    uint32_t OUT_LL_ADDR_REG;
-    uint32_t _0x28;
-    uint32_t _0x2C;
-    uint8_t HASH_RESULT_REG[0x20];
-    uint8_t _0x50[0x20];
-    uint32_t CONTEXT_SAVE_CONFIG_REG;
-    uint8_t _0x74[0x18C];
-    uint32_t SHA_CONFIG_REG;
-    uint32_t SHA_MSG_LENGTH_REG;
-    uint32_t _0x208;
-    uint32_t _0x20C;
-    uint32_t _0x210;
-    uint32_t SHA_MSG_LEFT_REG;
-    uint32_t _0x218;
-    uint32_t _0x21C;
-    uint32_t _0x220;
-    uint32_t _0x224;
-    uint8_t _0x228[0x5C];
-    uint32_t AES_KEY_READ_DISABLE_REG;
-    uint32_t AES_KEYSLOT_FLAGS[0x10];
-    uint8_t _0x2C8[0x38];
-    uint32_t _0x300;
-    uint32_t CRYPTO_REG;
-    uint32_t CRYPTO_CTR_REG[4];
-    uint32_t BLOCK_COUNT_REG;
-    uint32_t AES_KEYTABLE_ADDR;
-    uint32_t AES_KEYTABLE_DATA;
-    uint32_t _0x324;
-    uint32_t _0x328;
-    uint32_t _0x32C;
-    uint32_t CRYPTO_KEYTABLE_DST_REG;
-    uint8_t _0x334[0xC];
-    uint32_t RNG_CONFIG_REG;
-    uint32_t RNG_SRC_CONFIG_REG;
-    uint32_t RNG_RESEED_INTERVAL_REG;
-    uint8_t _0x34C[0xB4];
-    uint32_t RSA_CONFIG;
-    uint32_t RSA_KEY_SIZE_REG;
-    uint32_t RSA_EXP_SIZE_REG;
-    uint32_t RSA_KEY_READ_DISABLE_REG;
-    uint32_t RSA_KEYSLOT_FLAGS[2];
-    uint32_t _0x418;
-    uint32_t _0x41C;
-    uint32_t RSA_KEYTABLE_ADDR;
-    uint32_t RSA_KEYTABLE_DATA;
-    uint8_t RSA_OUTPUT[0x100];
-    uint8_t _0x528[0x2D8];
-    uint32_t FLAGS_REG;
-    uint32_t ERR_STATUS_REG;
-    uint32_t _0x808;
-    uint32_t _0x80C;
-    uint32_t _0x810;
+typedef struct {
+    uint32_t SE_SE_SECURITY;
+    uint32_t SE_TZRAM_SECURITY;
+    uint32_t SE_OPERATION;
+    uint32_t SE_INT_ENABLE;
+    uint32_t SE_INT_STATUS;
+    uint32_t SE_CONFIG;
+    uint32_t SE_IN_LL_ADDR;
+    uint32_t SE_IN_CUR_BYTE_ADDR;
+    uint32_t SE_IN_CUR_LL_ID;
+    uint32_t SE_OUT_LL_ADDR;
+    uint32_t SE_OUT_CUR_BYTE_ADDR;
+    uint32_t SE_OUT_CUR_LL_ID;
+    uint32_t SE_HASH_RESULT[0x10];
+    uint32_t SE_CTX_SAVE_CONFIG;
+    uint32_t _0x74[0x63];
+    uint32_t SE_SHA_CONFIG;
+    uint32_t SE_SHA_MSG_LENGTH[0x4];
+    uint32_t SE_SHA_MSG_LEFT[0x4];
+    uint32_t _0x224[0x17];
+    uint32_t SE_CRYPTO_SECURITY_PERKEY;
+    uint32_t SE_CRYPTO_KEYTABLE_ACCESS[0x10];
+    uint32_t _0x2C4[0x10];
+    uint32_t SE_CRYPTO_CONFIG;
+    uint32_t SE_CRYPTO_LINEAR_CTR[0x4];
+    uint32_t SE_CRYPTO_LAST_BLOCK;
+    uint32_t SE_CRYPTO_KEYTABLE_ADDR;
+    uint32_t SE_CRYPTO_KEYTABLE_DATA;
+    uint32_t _0x324[0x3];
+    uint32_t SE_CRYPTO_KEYTABLE_DST;
+    uint32_t _0x334[0x3];
+    uint32_t SE_RNG_CONFIG;
+    uint32_t SE_RNG_SRC_CONFIG;
+    uint32_t SE_RNG_RESEED_INTERVAL;
+    uint32_t _0x34C[0x2D];
+    uint32_t SE_RSA_CONFIG;
+    uint32_t SE_RSA_KEY_SIZE;
+    uint32_t SE_RSA_EXP_SIZE;
+    uint32_t SE_RSA_SECURITY_PERKEY;
+    uint32_t SE_RSA_KEYTABLE_ACCESS[0x2];
+    uint32_t _0x418[0x2];
+    uint32_t SE_RSA_KEYTABLE_ADDR;
+    uint32_t SE_RSA_KEYTABLE_DATA;
+    uint32_t SE_RSA_OUTPUT[0x40];
+    uint32_t _0x528[0xB6];
+    uint32_t SE_STATUS;
+    uint32_t SE_ERR_STATUS;
+    uint32_t SE_MISC;
+    uint32_t SE_SPARE;
+    uint32_t SE_ENTROPY_DEBUG_COUNTER;
     uint32_t _0x814;
     uint32_t _0x818;
     uint32_t _0x81C;
-    uint8_t _0x820[0x17E0];
-} security_engine_t;
-
-static_assert(sizeof(security_engine_t) == 0x2000, "Mis-defined Security Engine Registers!");
+    uint32_t _0x820[0x5F8];
+} tegra_se_t;
 
 typedef struct {
     uint32_t address;
@@ -152,16 +164,9 @@ typedef struct {
     se_addr_info_t addr_info; /* This should really be an array...but for our use case it works. */
 } se_ll_t;
 
-
-/* WIP, API subject to change. */
-
-static inline volatile security_engine_t *get_security_engine(void) {
-    return (volatile security_engine_t *)0x70012000;
+static inline volatile tegra_se_t *se_get_regs(void) {
+    return (volatile tegra_se_t *)SE_BASE;
 }
-
-#define SECURITY_ENGINE (get_security_engine())
-
-/* This function MUST be registered to fire on the appropriate interrupt. */
 
 void se_check_error_status_reg(void);
 void se_check_for_error(void);
@@ -184,8 +189,8 @@ void set_aes_keyslot_iv(unsigned int keyslot, const void *iv, size_t iv_size);
 void set_se_ctr(const void *ctr);
 
 /* Secure AES API */
-void se_aes_128_xts_nintendo_decrypt(unsigned int keyslot_1, unsigned int keyslot_2, unsigned int base_sector, void *dst, const void *src, size_t size, unsigned int sector_size);
-void se_aes_128_xts_nintendo_encrypt(unsigned int keyslot_1, unsigned int keyslot_2, unsigned int base_sector, void *dst, const void *src, size_t size, unsigned int sector_size);
+void se_aes_128_xts_nintendo_decrypt(unsigned int keyslot_1, unsigned int keyslot_2, unsigned int base_sector, void *dst, const void *src, size_t size, unsigned int sector_size, unsigned int crypto_sector_size);
+void se_aes_128_xts_nintendo_encrypt(unsigned int keyslot_1, unsigned int keyslot_2, unsigned int base_sector, void *dst, const void *src, size_t size, unsigned int sector_size, unsigned int crypto_sector_size);
 void se_compute_aes_128_cmac(unsigned int keyslot, void *cmac, size_t cmac_size, const void *data, size_t data_size);
 void se_compute_aes_256_cmac(unsigned int keyslot, void *cmac, size_t cmac_size, const void *data, size_t data_size);
 void se_aes_128_ecb_encrypt_block(unsigned int keyslot, void *dst, size_t dst_size, const void *src, size_t src_size);
@@ -193,6 +198,7 @@ void se_aes_256_ecb_encrypt_block(unsigned int keyslot, void *dst, size_t dst_si
 void se_aes_ctr_crypt(unsigned int keyslot, void *dst, size_t dst_size, const void *src, size_t src_size, const void *ctr, size_t ctr_size);
 void se_aes_ecb_decrypt_block(unsigned int keyslot, void *dst, size_t dst_size, const void *src, size_t src_size);
 void se_aes_256_cbc_encrypt(unsigned int keyslot, void *dst, size_t dst_size, const void *src, size_t src_size, const void *iv);
+void se_aes_128_cbc_decrypt(unsigned int keyslot, void *dst, size_t dst_size, const void *src, size_t src_size, const void *iv);
 
 /* Hash API */
 void se_calculate_sha256(void *dst, const void *src, size_t src_size);
@@ -206,4 +212,4 @@ bool se_rsa2048_pss_verify(const void *signature, size_t signature_size, const v
 void se_initialize_rng(unsigned int keyslot);
 void se_generate_random(unsigned int keyslot, void *dst, size_t size);
 
-#endif /* EXOSPHERE_SE_H */
+#endif

@@ -1,14 +1,31 @@
+/*
+ * Copyright (c) 2018-2020 Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 #include <fcntl.h>
 #include <sys/iosupport.h>
 #include <sys/param.h>
 #include <unistd.h>
 
-#include "lib/fatfs/ff.h"
+#include "../../../fusee/common/fatfs/ff.h"
 
 #if FF_VOLUMES != 10
 #error "FatFs misconfigured, expected FF_VOLUMES == 10"
@@ -229,6 +246,19 @@ int fsdev_set_default_device(const char *name) {
     return ret;
 }
 
+int fsdev_is_exfat(const char *name) {
+    fsdev_device_t *device = fsdev_find_device(name);
+
+    if (device != NULL) {
+        if (device->registered) {
+            return ((device->fatfs.fs_type == FS_EXFAT) ? 1 : 0);
+        }
+    }
+
+    errno = ENOENT;
+    return -1;
+}
+
 int fsdev_unmount_device(const char *name) {
     int ret;
     char drname[40];
@@ -259,6 +289,19 @@ int fsdev_unmount_device(const char *name) {
     return ret;
 }
 
+int fsdev_register_keys(const char *name, unsigned int target_firmware, BisPartition part) {
+    fsdev_device_t *device = fsdev_find_device(name);
+
+    if (device == NULL) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    derive_bis_key(device->devpart.keys, part, target_firmware);
+
+    return 0;
+}
+
 int fsdev_unmount_all(void) {
     for (size_t i = 0; i < FF_VOLUMES; i++) {
         int ret = fsdev_unmount_device(g_fsdev_devices[i].name);
@@ -268,6 +311,21 @@ int fsdev_unmount_all(void) {
     }
 
     return 0;
+}
+
+int fsdev_set_attr(const char *file, int attr, int mask) {
+    return fsdev_convert_rc(NULL, f_chmod(file, (BYTE)attr, (BYTE)mask));
+}
+
+int fsdev_get_attr(const char *file) {
+    FILINFO info;
+    FRESULT rc = f_stat(file, &info);
+
+    if (rc == FR_OK) {
+        return info.fattrib;
+    }
+
+    return fsdev_convert_rc(NULL, rc);
 }
 
 /* Adapted from https://github.com/benemorius/openOBC-devboard/blob/bf0a4a33e22d24e7c299f921d185da27377310e0/lib/fatfs/FatFS.cpp#L173 */
@@ -359,6 +417,8 @@ static void fsdev_filinfo_to_st(struct stat *st, const FILINFO *info) {
     date.tm_min  = (info->ftime >> 5) & 63;
     date.tm_hour = (info->ftime >> 11) & 31;
 
+    date.tm_isdst = 0;
+
     st->st_atime = st->st_mtime = st->st_ctime = mktime(&date);
     st->st_size = (off_t)info->fsize;
     st->st_nlink = 1;
@@ -439,7 +499,7 @@ static ssize_t fsdev_read(struct _reent *r, void *fd, char *ptr, size_t len) {
 }
 
 static off_t fsdev_seek(struct _reent *r, void *fd, off_t pos, int whence) {
-    FIL *f = (FIL *)f;
+    FIL *f = (FIL *)fd;
     FSIZE_t off;
     int ret;
 
@@ -458,7 +518,7 @@ static off_t fsdev_seek(struct _reent *r, void *fd, off_t pos, int whence) {
             return -1;
     }
 
-    if(pos < 0 && pos + off < 0) {
+    if ((FSIZE_t)pos < 0 && (FSIZE_t)pos + off < 0) {
         /* don't allow seek to before the beginning of the file */
         r->_errno = EINVAL;
         return -1;
