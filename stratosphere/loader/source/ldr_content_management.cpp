@@ -1,145 +1,163 @@
-#include <switch.h>
-#include <string.h>
-#include <vector>
-#include <algorithm>
-
-#include "ldr_registration.hpp"
+/*
+ * Copyright (c) Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+#include <stratosphere.hpp>
 #include "ldr_content_management.hpp"
 
-static FsFileSystem g_CodeFileSystem = {0};
+namespace ams::ldr {
 
-static std::vector<u64> g_created_titles;
-static bool g_has_initialized_fs_dev = false;
-
-Result ContentManagement::MountCode(u64 tid, FsStorageId sid) {
-    char path[FS_MAX_PATH] = {0};
-    Result rc;
-    
-    /* We defer SD card mounting, so if relevant ensure it is mounted. */
-    if (!g_has_initialized_fs_dev) {   
-        TryMountSdCard();
+    /* ScopedCodeMount functionality. */
+    ScopedCodeMount::ScopedCodeMount(const ncm::ProgramLocation &loc, const ldr::ProgramAttributes &attrs, os::SdkMutex &mutex, const char *ams, const char *sd_b, const char *b) : m_lk(mutex), m_ams_path(ams), m_sd_or_base_path(sd_b), m_base_path(b), m_has_status(false), m_mounted_ams(false), m_mounted_sd_or_code(false), m_mounted_code(false) {
+        m_result = this->Initialize(loc, attrs);
     }
 
-        
-    if (R_FAILED(rc = ResolveContentPath(path, tid, sid))) {
-        return rc;
+    ScopedCodeMount::ScopedCodeMount(const ncm::ProgramLocation &loc, const cfg::OverrideStatus &o, const ldr::ProgramAttributes &attrs, os::SdkMutex &mutex, const char *ams, const char *sd_b, const char *b) : m_lk(mutex), m_ams_path(ams), m_sd_or_base_path(sd_b), m_base_path(b), m_override_status(o), m_has_status(true), m_mounted_ams(false), m_mounted_sd_or_code(false), m_mounted_code(false) {
+        m_result = this->Initialize(loc, attrs);
     }
-    
-    /* Fix up path. */
-    for (unsigned int i = 0; i < FS_MAX_PATH && path[i] != '\x00'; i++) {
-        if (path[i] == '\\') {
-            path[i] = '/';
+
+    ScopedCodeMount::~ScopedCodeMount() {
+        /* Unmount filesystems. */
+        if (m_mounted_ams) {
+            fs::Unmount(m_ams_path);
+        }
+        if (m_mounted_sd_or_code) {
+            fs::Unmount(m_sd_or_base_path);
+        }
+        if (m_mounted_code) {
+            fs::Unmount(m_base_path);
         }
     }
-    
-    /* Always re-initialize fsp-ldr, in case it's closed */
-    if (R_FAILED(rc = fsldrInitialize())) {
-        return rc;
-    }
-    
-    if (R_FAILED(rc = fsldrOpenCodeFileSystem(tid, path, &g_CodeFileSystem))) {
-        fsldrExit();
-        return rc;
-    }
-    
-    fsdevMountDevice("code", g_CodeFileSystem);
-    
-    return rc;
-}
 
-Result ContentManagement::UnmountCode() {
-    fsdevUnmountDevice("code");
-    return 0;
-}
+    Result ScopedCodeMount::Initialize(const ncm::ProgramLocation &loc, const ldr::ProgramAttributes &attrs) {
+        /* Capture override status, if necessary. */
+        this->EnsureOverrideStatus(loc);
+        AMS_ABORT_UNLESS(m_has_status);
 
-Result ContentManagement::MountCodeForTidSid(Registration::TidSid *tid_sid) {
-    return MountCode(tid_sid->title_id, tid_sid->storage_id);
-}
+        /* Get the content path. */
+        char content_path[fs::EntryNameLengthMax + 1];
+        R_TRY(GetProgramPath(content_path, sizeof(content_path), loc, attrs));
 
-Result ContentManagement::ResolveContentPath(char *out_path, u64 tid, FsStorageId sid) {
-    Result rc;
-    LrRegisteredLocationResolver reg;
-    LrLocationResolver lr;
-    char path[FS_MAX_PATH] = {0};
-    
-    /* Try to get the path from the registered resolver. */
-    if (R_FAILED(rc = lrOpenRegisteredLocationResolver(&reg))) {
-        return rc;
+        /* Get the content attributes. */
+        const auto content_attributes = attrs.content_attributes;
+
+        /* Mount the atmosphere code file system. */
+        R_TRY(fs::MountCodeForAtmosphereWithRedirection(std::addressof(m_ams_code_verification_data), m_ams_path, content_path, content_attributes, loc.program_id, static_cast<ncm::StorageId>(loc.storage_id), m_override_status.IsHbl(), m_override_status.IsProgramSpecific()));
+        m_mounted_ams = true;
+
+        /* Mount the sd or base code file system. */
+        R_TRY(fs::MountCodeForAtmosphere(std::addressof(m_sd_or_base_code_verification_data), m_sd_or_base_path, content_path, content_attributes, loc.program_id, static_cast<ncm::StorageId>(loc.storage_id)));
+        m_mounted_sd_or_code = true;
+
+        /* Mount the base code file system. */
+        if (R_SUCCEEDED(fs::MountCode(std::addressof(m_base_code_verification_data), m_base_path, content_path, content_attributes, loc.program_id, static_cast<ncm::StorageId>(loc.storage_id)))) {
+            m_mounted_code = true;
+        }
+
+        R_SUCCEED();
     }
-    
-    if (R_SUCCEEDED(rc = lrRegLrResolveProgramPath(&reg, tid, path))) {
-        strncpy(out_path, path, FS_MAX_PATH);
-    } else if (rc != 0x408) {
-        return rc;
-    }
-    
-    serviceClose(&reg.s);
-    if (R_SUCCEEDED(rc)) {
-        return rc;
-    }
-    
-    /* If getting the path from the registered resolver fails, fall back to the normal resolver. */
-    if (R_FAILED(rc = lrOpenLocationResolver(sid, &lr))) {
-        return rc;
-    }
-    
-    if (R_SUCCEEDED(rc = lrLrResolveProgramPath(&lr, tid, path))) {
-        strncpy(out_path, path, FS_MAX_PATH);
-    }
-    
-    serviceClose(&lr.s);
-    
-    return rc;
-}
 
-Result ContentManagement::ResolveContentPathForTidSid(char *out_path, Registration::TidSid *tid_sid) {
-    return ResolveContentPath(out_path, tid_sid->title_id, tid_sid->storage_id);
-}
-
-Result ContentManagement::RedirectContentPath(const char *path, u64 tid, FsStorageId sid) {
-    Result rc;
-    LrLocationResolver lr;
-    
-    if (R_FAILED(rc = lrOpenLocationResolver(sid, &lr))) {
-        return rc;
+    void ScopedCodeMount::EnsureOverrideStatus(const ncm::ProgramLocation &loc) {
+        if (m_has_status) {
+            return;
+        }
+        m_override_status = cfg::CaptureOverrideStatus(loc.program_id);
+        m_has_status = true;
     }
-    
-    rc = lrLrRedirectProgramPath(&lr, tid, path);
-    
-    serviceClose(&lr.s);
-    
-    return rc;
-}
 
-Result ContentManagement::RedirectContentPathForTidSid(const char *path, Registration::TidSid *tid_sid) {
-    return RedirectContentPath(path, tid_sid->title_id, tid_sid->storage_id);
-}
+    /* Redirection API. */
+    Result GetProgramPath(char *out_path, size_t out_size, const ncm::ProgramLocation &loc, const ldr::ProgramAttributes &attrs) {
+        /* Check for storage id none. */
+        if (static_cast<ncm::StorageId>(loc.storage_id) == ncm::StorageId::None) {
+            std::memset(out_path, 0, out_size);
+            std::memcpy(out_path, "/", std::min<size_t>(out_size, 2));
+            R_SUCCEED();
+        }
 
-bool ContentManagement::HasCreatedTitle(u64 tid) {
-    return std::find(g_created_titles.begin(), g_created_titles.end(), tid) != g_created_titles.end();
-}
+        /* Get the content attributes. */
+        const auto content_attributes = attrs.content_attributes;
+        AMS_UNUSED(content_attributes);
 
-void ContentManagement::SetCreatedTitle(u64 tid) {
-    if (!HasCreatedTitle(tid)) {
-        g_created_titles.push_back(tid);
-    }
-}
+        lr::Path path;
 
-void ContentManagement::TryMountSdCard() {
-    /* Mount SD card, if psc, bus, and pcv have been created. */
-    if (!g_has_initialized_fs_dev && HasCreatedTitle(0x0100000000000021) && HasCreatedTitle(0x010000000000000A) && HasCreatedTitle(0x010000000000001A)) {
-        Handle tmp_hnd = 0;
-        static const char * const required_active_services[] = {"pcv", "gpio", "pinmux", "psc:c"};
-        for (unsigned int i = 0; i < sizeof(required_active_services) / sizeof(required_active_services[0]); i++) {
-            if (R_FAILED(smGetServiceOriginal(&tmp_hnd, smEncodeName(required_active_services[i])))) {
-                return;
-            } else {
-                svcCloseHandle(tmp_hnd);   
+        /* Check that path registration is allowable. */
+        if (static_cast<ncm::StorageId>(loc.storage_id) == ncm::StorageId::Host) {
+            AMS_ABORT_UNLESS(spl::IsDevelopment());
+        }
+
+        /* Try to get the path from the registered resolver. */
+        lr::RegisteredLocationResolver reg;
+        R_TRY(lr::OpenRegisteredLocationResolver(std::addressof(reg)));
+
+        R_TRY_CATCH(reg.ResolveProgramPath(std::addressof(path), loc.program_id)) {
+            R_CATCH(lr::ResultProgramNotFound) {
+                /* Program wasn't found via registered resolver, fall back to the normal resolver. */
+                lr::LocationResolver lr;
+                R_TRY(lr::OpenLocationResolver(std::addressof(lr), static_cast<ncm::StorageId>(loc.storage_id)));
+                R_TRY(lr.ResolveProgramPath(std::addressof(path), loc.program_id));
             }
-        }
-        
-        if (R_SUCCEEDED(fsdevMountSdmc())) {
-            g_has_initialized_fs_dev = true;
-        }
+        } R_END_TRY_CATCH;
+
+        /* Fix directory separators in path. */
+        fs::Replace(path.str, sizeof(path.str), fs::StringTraits::AlternateDirectorySeparator, fs::StringTraits::DirectorySeparator);
+
+        /* Check that the path is valid. */
+        AMS_ABORT_UNLESS(path.IsValid());
+
+        /* Copy the output path. */
+        std::memset(out_path, 0, out_size);
+        std::memcpy(out_path, path.str, std::min(out_size, sizeof(path)));
+
+        R_SUCCEED();
     }
+
+    Result RedirectProgramPath(const char *path, size_t size, const ncm::ProgramLocation &loc) {
+        /* Check for storage id none. */
+        if (static_cast<ncm::StorageId>(loc.storage_id) == ncm::StorageId::None) {
+            R_SUCCEED();
+        }
+
+        /* Open location resolver. */
+        lr::LocationResolver lr;
+        R_TRY(lr::OpenLocationResolver(std::addressof(lr),  static_cast<ncm::StorageId>(loc.storage_id)));
+
+        /* Copy in path. */
+        lr::Path lr_path;
+        std::memcpy(lr_path.str, path, std::min(size, sizeof(lr_path.str)));
+        lr_path.str[sizeof(lr_path.str) - 1] = '\x00';
+
+        /* Redirect the path. */
+        lr.RedirectProgramPath(lr_path, loc.program_id);
+
+        R_SUCCEED();
+    }
+
+    Result RedirectHtmlDocumentPathForHbl(const ncm::ProgramLocation &loc) {
+        lr::Path path;
+
+        /* Open a location resolver. */
+        lr::LocationResolver lr;
+        R_TRY(lr::OpenLocationResolver(std::addressof(lr),  static_cast<ncm::StorageId>(loc.storage_id)));
+
+        /* If there's already a Html Document path, we don't need to set one. */
+        R_SUCCEED_IF(R_SUCCEEDED(lr.ResolveApplicationHtmlDocumentPath(std::addressof(path), loc.program_id)));
+
+        /* We just need to set this to any valid NCA path. Let's use the executable path. */
+        R_TRY(lr.ResolveProgramPath(std::addressof(path), loc.program_id));
+        lr.RedirectApplicationHtmlDocumentPath(path, loc.program_id, loc.program_id);
+
+        R_SUCCEED();
+    }
+
 }

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Atmosphere-NX/Atmosphere-libs
+	branch = master
+	commit = d3083af1827cd6ca2a96feb9316eb85cd01bae1f
+	parent = 974a1025b834136134e8133d8db23f69cb5ae0be
+	method = merge
+	cmdver = 0.4.9

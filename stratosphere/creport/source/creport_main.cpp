@@ -1,122 +1,160 @@
-#include <cstdlib>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <malloc.h>
-
-#include <switch.h>
-
+/*
+ * Copyright (c) Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+#include <stratosphere.hpp>
 #include "creport_crash_report.hpp"
+#include "creport_utils.hpp"
 
+namespace ams {
 
-extern "C" {
-    extern u32 __start__;
+    namespace creport {
 
-    u32 __nx_applet_type = AppletType_None;
+        namespace {
 
-    #define INNER_HEAP_SIZE 0x100000
-    size_t nx_inner_heap_size = INNER_HEAP_SIZE;
-    char   nx_inner_heap[INNER_HEAP_SIZE];
-    
-    void __libnx_initheap(void);
-    void __appInit(void);
-    void __appExit(void);
-}
+            constinit u8 g_fs_heap_memory[4_KB];
+            lmem::HeapHandle g_fs_heap_handle;
 
-
-void __libnx_initheap(void) {
-	void*  addr = nx_inner_heap;
-	size_t size = nx_inner_heap_size;
-
-	/* Newlib */
-	extern char* fake_heap_start;
-	extern char* fake_heap_end;
-
-	fake_heap_start = (char*)addr;
-	fake_heap_end   = (char*)addr + size;
-}
-
-void __appInit(void) {
-    Result rc;
-
-    rc = smInitialize();
-    if (R_FAILED(rc)) {
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
-    }
-    
-    rc = fsInitialize();
-    if (R_FAILED(rc)) {
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
-    }
-    
-    rc = fsdevMountSdmc();
-    if (R_FAILED(rc)) {
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
-    }
-}
-
-void __appExit(void) {
-    /* Cleanup services. */
-    fsdevUnmountAll();
-    fsExit();
-    smExit();
-}
-
-static u64 creport_parse_u64(char *s) {
-    /* Official creport uses this custom parsing logic... */
-    u64 out_val = 0;
-    for (unsigned int i = 0; i < 20 && s[i]; i++) {
-        if ('0' <= s[i] && s[i] <= '9') {
-            out_val *= 10;
-            out_val += (s[i] - '0');
-        } else {
-            break;
-        }
-    }
-    return out_val;
-}
-
-static CrashReport g_Creport;
-
-int main(int argc, char **argv) {
-    /* Validate arguments. */
-    if (argc < 2) {
-        return 0;
-    }
-    for (int i = 0; i < argc; i++) {
-        if (argv[i] == NULL) {
-            return 0;
-        }
-    }
-    
-    /* Parse crashed PID. */
-    u64 crashed_pid = creport_parse_u64(argv[0]);
-    
-    /* Try to debug the crashed process. */
-    g_Creport.BuildReport(crashed_pid, argv[1][0] == '1');
-    if (g_Creport.WasSuccessful()) {
-        g_Creport.SaveReport();
-        
-        if (R_SUCCEEDED(nsdevInitialize())) {
-            nsdevTerminateProcess(crashed_pid);
-            nsdevExit();
-        }
-        
-        /* Don't fatal if we have extra info. */
-        if (kernelAbove500()) {
-            if (g_Creport.IsApplication()) {
-                return 0;
+            void *AllocateForFs(size_t size) {
+                return lmem::AllocateFromExpHeap(g_fs_heap_handle, size);
             }
-        } else if (argv[1][0] == '1') {
-            return 0;
+
+            void DeallocateForFs(void *p, size_t size) {
+                AMS_UNUSED(size);
+                return lmem::FreeToExpHeap(g_fs_heap_handle, p);
+            }
+
+            void InitializeFsHeap() {
+                g_fs_heap_handle = lmem::CreateExpHeap(g_fs_heap_memory, sizeof(g_fs_heap_memory), lmem::CreateOption_None);
+            }
+
         }
-        
-        /* Also don't fatal if we're a user break. */
-        if (g_Creport.IsUserBreak()) {
-            return 0;
-        }
-        
-        fatalWithType(g_Creport.GetResult(), FatalType_ErrorScreen);
+
     }
-    
+
+    namespace init {
+
+        void InitializeSystemModule() {
+            /* Initialize heap. */
+            creport::InitializeFsHeap();
+
+            /* Initialize our connection to sm. */
+            R_ABORT_UNLESS(sm::Initialize());
+
+            /* Initialize fs. */
+            fs::InitializeForSystem();
+            fs::SetAllocator(creport::AllocateForFs, creport::DeallocateForFs);
+            fs::SetEnabledAutoAbort(false);
+
+            /* Mount the SD card. */
+            R_ABORT_UNLESS(fs::MountSdCard("sdmc"));
+        }
+
+        void FinalizeSystemModule() { /* ... */ }
+
+        void Startup() { /* ... */ }
+
+    }
+
+    namespace {
+
+        constinit creport::CrashReport g_crash_report;
+
+    }
+
+    void Main() {
+        /* Set thread name. */
+        os::SetThreadNamePointer(os::GetCurrentThread(), AMS_GET_SYSTEM_THREAD_NAME(creport, Main));
+        AMS_ASSERT(os::GetThreadPriority(os::GetCurrentThread()) == AMS_GET_SYSTEM_THREAD_PRIORITY(creport, Main));
+
+        /* Get arguments. */
+        const int num_args = os::GetHostArgc();
+        char ** const args = os::GetHostArgv();
+
+        /* Validate arguments. */
+        if (num_args < 2) {
+            return;
+        }
+
+        for (auto i = 0; i < num_args; ++i) {
+            if (args[i] == nullptr) {
+                return;
+            }
+        }
+
+        /* Parse arguments. */
+        const os::ProcessId crashed_pid = creport::ParseProcessIdArgument(args[0]);
+        const bool has_extra_info       = args[1][0] == '1';
+        const bool enable_screenshot    = num_args >= 3 && args[2][0] == '1';
+        const bool enable_jit_debug     = num_args >= 4 && args[3][0] == '1';
+
+        /* Initialize the crash report. */
+        g_crash_report.Initialize();
+
+        /* Try to debug the crashed process. */
+        {
+            g_crash_report.BuildReport(crashed_pid, has_extra_info);
+            ON_SCOPE_EXIT { if (g_crash_report.IsOpen()) { g_crash_report.Close(); } };
+
+            if (!g_crash_report.IsComplete()) {
+                return;
+            }
+
+            /* Save report to file. */
+            g_crash_report.SaveReport(enable_screenshot);
+        }
+
+        /* Try to terminate the process, if we should. */
+        const auto fw_ver = hos::GetVersion();
+        if (fw_ver < hos::Version_11_0_0 || !enable_jit_debug) {
+            if (fw_ver >= hos::Version_10_0_0) {
+                /* Use pgl to terminate. */
+                if (R_SUCCEEDED(pgl::Initialize())) {
+                    ON_SCOPE_EXIT { pgl::Finalize(); };
+
+                    pgl::TerminateProcess(crashed_pid);
+                }
+            } else {
+                /* Use ns to terminate. */
+                if (R_SUCCEEDED(::nsdevInitialize())) {
+                    ON_SCOPE_EXIT { ::nsdevExit(); };
+
+                    nsdevTerminateProcess(crashed_pid.value);
+                }
+            }
+        }
+
+        /* If we're on 5.0.0+ and an application crashed, or if we have extra info, we don't need to fatal. */
+        if (fw_ver >= hos::Version_5_0_0) {
+            if (g_crash_report.IsApplication()) {
+                return;
+            }
+        } else if (has_extra_info) {
+            return;
+        }
+
+        /* We also don't need to fatal on user break. */
+        if (g_crash_report.IsUserBreak()) {
+            return;
+        }
+
+        /* Throw fatal error. */
+        {
+            ::FatalCpuContext ctx;
+            g_crash_report.GetFatalContext(std::addressof(ctx));
+            fatalThrowWithContext(g_crash_report.GetResult().GetValue(), FatalPolicy_ErrorScreen, std::addressof(ctx));
+        }
+    }
+
 }

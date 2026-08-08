@@ -1,45 +1,138 @@
+/*
+ * Copyright (c) Atmosphère-NX
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 #pragma once
-#include <switch.h>
-#include <stratosphere/iserviceobject.hpp>
+#include <stratosphere.hpp>
+#include "impl/sm_service_manager.hpp"
 
-enum UserServiceCmd {
-    User_Cmd_Initialize = 0,
-    User_Cmd_GetService = 1,
-    User_Cmd_RegisterService = 2,
-    User_Cmd_UnregisterService = 3,
-    
-    User_Cmd_AtmosphereInstallMitm = 65000,
-    User_Cmd_AtmosphereUninstallMitm = 65001,
-    User_Cmd_AtmosphereAssociatePidTidForMitm = 65002
-};
+namespace ams::sm {
 
-class UserService final : public IServiceObject {
-    u64 pid = U64_MAX;
-    bool has_initialized = false;
-    u64 deferred_service = 0;
-    
-    public:
-        Result dispatch(IpcParsedCommand &r, IpcCommand &out_c, u64 cmd_id, u8 *pointer_buffer, size_t pointer_buffer_size) override;
-        Result handle_deferred() override;
-        
-        UserService *clone() override {
-            auto new_srv = new UserService();
-            new_srv->pid = pid;
-            new_srv->has_initialized = has_initialized;
-            new_srv->deferred_service = deferred_service;
-            return new_srv;
-        }
-        
-    private:
-        /* Actual commands. */
-        std::tuple<Result> initialize(PidDescriptor pid);
-        std::tuple<Result, MovedHandle> get_service(u64 service);
-        std::tuple<Result, MovedHandle> deferred_get_service(u64 service);
-        std::tuple<Result, MovedHandle> register_service(u64 service, u8 is_light, u32 max_sessions);
-        std::tuple<Result> unregister_service(u64 service);
-        
-        /* Atmosphere commands. */
-        std::tuple<Result, MovedHandle, MovedHandle> install_mitm(u64 service);
-        std::tuple<Result> uninstall_mitm(u64 service);
-        std::tuple<Result> associate_pid_tid_for_mitm(u64 pid, u64 tid);
-};
+    /* Service definition. */
+    class UserService : public tipc::DeferrableBase<sm::impl::IUserInterface, /* Maximum deferrable CMIF message size: */ 0x20 + util::AlignUp(sizeof(sm::ServiceName), sizeof(u32))> {
+        private:
+            os::ProcessId m_process_id;
+            bool m_initialized;
+        public:
+            UserService() : m_process_id{os::InvalidProcessId}, m_initialized{false} { /* ... */ }
+            ~UserService() {
+                if (m_initialized) {
+                    impl::OnClientDisconnected(m_process_id);
+                }
+            }
+        public:
+            /* Official commands. */
+            Result RegisterClient(const tipc::ClientProcessId client_process_id) {
+                m_process_id  = client_process_id.value;
+                m_initialized = true;
+                R_SUCCEED();
+            }
+
+            Result GetServiceHandle(tipc::OutMoveHandle out_h, ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                TIPC_REGISTER_RETRY_ON_RESULT_REQUEST_DEFERRED(service);
+
+                R_RETURN(impl::GetServiceHandle(out_h.GetPointer(), m_process_id, service));
+            }
+
+            Result RegisterService(tipc::OutMoveHandle out_h, ServiceName service, u32 max_sessions, bool is_light) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::RegisterService(out_h.GetPointer(), m_process_id, service, max_sessions, is_light));
+            }
+
+            Result UnregisterService(ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::UnregisterService(m_process_id, service));
+            }
+
+            Result DetachClient(const tipc::ClientProcessId client_process_id) {
+                AMS_UNUSED(client_process_id);
+
+                m_initialized = false;
+
+                R_SUCCEED();
+            }
+
+            /* Atmosphere commands. */
+            Result AtmosphereInstallMitm(tipc::OutMoveHandle srv_h, tipc::OutMoveHandle qry_h, ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                TIPC_REGISTER_RETRY_ON_RESULT_REQUEST_DEFERRED(service);
+
+                R_RETURN(impl::InstallMitm(srv_h.GetPointer(), qry_h.GetPointer(), m_process_id, service));
+            }
+
+            Result AtmosphereUninstallMitm(ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::UninstallMitm(m_process_id, service));
+            }
+
+            Result AtmosphereAcknowledgeMitmSession(tipc::Out<MitmProcessInfo> client_info, tipc::OutMoveHandle fwd_h, ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::AcknowledgeMitmSession(client_info.GetPointer(), fwd_h.GetPointer(), m_process_id, service));
+            }
+
+            Result AtmosphereHasMitm(tipc::Out<bool> out, ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::HasMitm(out.GetPointer(), service));
+            }
+
+            Result AtmosphereWaitMitm(ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                TIPC_REGISTER_RETRY_ON_RESULT_REQUEST_DEFERRED(service);
+
+                R_RETURN(impl::WaitMitm(service));
+            }
+
+            Result AtmosphereDeclareFutureMitm(ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::DeclareFutureMitm(m_process_id, service));
+            }
+
+            Result AtmosphereClearFutureMitm(ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::ClearFutureMitm(m_process_id, service));
+            }
+
+            Result AtmosphereHasService(tipc::Out<bool> out, ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                R_RETURN(impl::HasService(out.GetPointer(), service));
+            }
+
+            Result AtmosphereWaitService(ServiceName service) {
+                R_UNLESS(m_initialized, sm::ResultInvalidClient());
+
+                TIPC_REGISTER_RETRY_ON_RESULT_REQUEST_DEFERRED(service);
+
+                R_RETURN(impl::WaitService(service));
+            }
+        public:
+            /* Backwards compatibility layer for cmif. */
+            Result ProcessDefaultServiceCommand(const svc::ipc::MessageBuffer &message_buffer);
+    };
+    static_assert(sm::impl::IsIUserInterface<UserService>);
+    static_assert(tipc::IsDeferrable<UserService>);
+    /* TODO: static assert that this is a tipc interface with default prototyping. */
+
+}
